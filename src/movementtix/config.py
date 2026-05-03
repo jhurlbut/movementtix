@@ -114,11 +114,13 @@ EVENT_IDS: dict[str, dict[PassType, str]] = {
     },
     "vividseats": {
         PassType.THREE_DAY: "6136478",
-        # Saturday production ID — fill in after one-time lookup on vividseats.com
-        PassType.SATURDAY: "",
+        PassType.SATURDAY: "6482557",
     },
     "tixel": {PassType.THREE_DAY: "", PassType.SATURDAY: ""},
-    "stubhub": {PassType.THREE_DAY: "", PassType.SATURDAY: ""},
+    "stubhub": {
+        PassType.THREE_DAY: "159631798",
+        PassType.SATURDAY: "159867649",
+    },
     "viagogo": {PassType.THREE_DAY: "", PassType.SATURDAY: ""},
     # SeatGeek scraper resolves IDs at runtime via the events search API.
     "seatgeek": {PassType.THREE_DAY: "", PassType.SATURDAY: ""},

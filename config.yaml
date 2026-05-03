@@ -26,11 +26,11 @@ browser:
 # Toggle individual scrapers. Disable any that are broken or noisy.
 sites:
   tixel: true
-  axs: true
   stubhub: true
-  viagogo: true
   vividseats: true
-  seatgeek: false   # SeatGeek doesn't list Movement 2026 — verified via /2/events search
+  axs: false        # primary vendor — face value never beats resale caps; prices behind JS modal
+  viagogo: false    # Movement 2026 not listed on platform (verified)
+  seatgeek: false   # Movement 2026 not listed on platform (verified)
 
 # Reddit r/MovementDEMF feed: alerts on new posts mentioning ticket
 # resale or after-party tickets. Uses Reddit OAuth (free script app).
