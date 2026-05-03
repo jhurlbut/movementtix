@@ -38,7 +38,24 @@ class State:
               hash TEXT PRIMARY KEY,
               sent_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS reddit_seen (
+              post_id TEXT PRIMARY KEY,
+              alerted_at TEXT NOT NULL
+            );
             """
+        )
+
+    def reddit_already_seen(self, post_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM reddit_seen WHERE post_id=?", (post_id,)
+        ).fetchone()
+        return row is not None
+
+    def mark_reddit_seen(self, post_id: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO reddit_seen(post_id, alerted_at) VALUES (?, ?)",
+            (post_id, datetime.now(timezone.utc).isoformat()),
         )
 
     def record(self, listing: Listing) -> int:

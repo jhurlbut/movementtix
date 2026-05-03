@@ -35,17 +35,56 @@ class Sites(BaseModel):
         return [name for name, on in self.model_dump().items() if on]
 
 
+class BrowserConfig(BaseModel):
+    """Controls how Playwright launches a browser for AXS / Viagogo /
+    other heavily-protected sites.
+
+    Three modes (auto-detected in this order of preference):
+      1. `cdp_url` set → connect to a running Chrome via DevTools Protocol.
+         Recommended: start Chrome with
+           chrome --remote-debugging-port=9222 --user-data-dir=...
+         and put `cdp_url: http://localhost:9222` here.
+      2. `user_data_dir` set → launch a persistent Playwright Chromium
+         using that directory (cookies + fingerprint persist across runs).
+      3. Neither set → ephemeral headless Chromium (default; lowest
+         success rate against Datadome).
+    """
+
+    cdp_url: str = ""
+    user_data_dir: str = ""
+    headless: bool = True
+    channel: str = ""  # "chrome" | "msedge" | "" for bundled chromium
+
+
+class RedditFeed(BaseModel):
+    enabled: bool = True
+    subreddit: str = "MovementDEMF"
+    fetch_limit: int = 50
+    keywords: list[str] = Field(
+        default_factory=lambda: [
+            "selling", "sell my", "for sale", "wts", "resale", "resell", "re-sell",
+            "iso", "in search of", "looking for", "wristband", "3-day", "3 day",
+            "saturday pass", "sunday pass", "monday pass",
+            "after party", "after-party", "afterparty", "afters",
+        ]
+    )
+
+
 class Config(BaseModel):
     caps: Caps = Field(default_factory=Caps)
     poll_seconds: PollSeconds = Field(default_factory=PollSeconds)
     alert_dedupe_hours: int = 6
     sites: Sites = Field(default_factory=Sites)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    reddit: RedditFeed = Field(default_factory=RedditFeed)
     state_db: str = "state.db"
     log_file: str = "movementtix.log"
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     seatgeek_client_id: str = ""
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
 
     @classmethod
     def load(cls, path: str | Path = "config.yaml") -> "Config":
@@ -58,6 +97,8 @@ class Config(BaseModel):
         cfg.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         cfg.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
         cfg.seatgeek_client_id = os.getenv("SEATGEEK_CLIENT_ID", "")
+        cfg.reddit_client_id = os.getenv("REDDIT_CLIENT_ID", "")
+        cfg.reddit_client_secret = os.getenv("REDDIT_CLIENT_SECRET", "")
         return cfg
 
 

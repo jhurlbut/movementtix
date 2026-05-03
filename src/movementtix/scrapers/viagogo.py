@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 
+from ..browser import open_page
 from ..config import EVENT_IDS
 from ..models import Listing, PassType
 from ..pricing import estimate_fees
@@ -10,10 +11,10 @@ from .base import Scraper
 
 log = logging.getLogger(__name__)
 
-# Viagogo has aggressive Datadome protection. The static fetch frequently
-# gets a challenge page, so this scraper prefers Playwright (with stealth
-# if installed) and degrades gracefully.
-SEARCH_URL = "https://www.viagogo.com/Concert-Tickets/Festivals/Movement-Electronic-Music-Festival-Tickets"
+SEARCH_URL = (
+    "https://www.viagogo.com/Concert-Tickets/Festivals/"
+    "Movement-Electronic-Music-Festival-Tickets"
+)
 
 
 class ViagogoScraper(Scraper):
@@ -26,7 +27,7 @@ class ViagogoScraper(Scraper):
             if event_id
             else SEARCH_URL
         )
-        price = self._fetch_with_playwright(url, pass_type)
+        price = self._fetch_with_browser(url, pass_type)
         if price is None:
             log.info("viagogo: no price extracted (likely Datadome block)")
             return None
@@ -41,42 +42,22 @@ class ViagogoScraper(Scraper):
             raw={"event_id": event_id, "source_url": url},
         )
 
-    def _fetch_with_playwright(self, url: str, pass_type: PassType) -> float | None:
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            log.info("viagogo: playwright not installed")
-            return None
-        try:
-            from playwright_stealth import stealth_sync  # type: ignore
-        except ImportError:
-            stealth_sync = None  # type: ignore[assignment]
-
-        try:
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
-                ctx = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) "
-                        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-                    ),
-                    locale="en-US",
-                )
-                page = ctx.new_page()
-                if stealth_sync:
-                    stealth_sync(page)
+    def _fetch_with_browser(self, url: str, pass_type: PassType) -> float | None:
+        with open_page(self.config.browser) as page:
+            if page is None:
+                return None
+            try:
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(3500)
                 if pass_type is PassType.SATURDAY and "Movement" in page.url:
                     self._click_saturday(page)
                 content = page.content()
-                browser.close()
-        except Exception as e:
-            log.info("viagogo playwright failed: %s", e)
-            return None
+            except Exception as e:
+                log.info("viagogo browser fetch failed: %s", e)
+                return None
 
         if "datadome" in content.lower() or "captcha" in content.lower():
-            log.info("viagogo: hit anti-bot challenge")
+            log.info("viagogo: hit anti-bot challenge — try CDP / user_data_dir mode")
             return None
         prices = [float(m) for m in re.findall(r'\$\s*(\d{2,4}(?:\.\d{2})?)', content)]
         return min(prices) if prices else None

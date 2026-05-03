@@ -11,6 +11,18 @@ poll_seconds:
 # Don't re-alert the same listing within this many hours.
 alert_dedupe_hours: 6
 
+# Browser connector for AXS / Viagogo (anti-bot heavy sites). Three modes:
+#   1. cdp_url: connect to a running Chrome with --remote-debugging-port=9222
+#      → uses YOUR existing logged-in session (most reliable).
+#   2. user_data_dir: launch a persistent Chromium that keeps cookies between
+#      runs. Safer than CDP if you don't want to share your real Chrome.
+#   3. neither set → ephemeral headless Chromium (default; lowest success rate).
+browser:
+  cdp_url: ""           # e.g. "http://localhost:9222"
+  user_data_dir: ""     # e.g. "/Users/you/.movementtix-chrome"
+  headless: true        # ignored when cdp_url is set
+  channel: ""           # "chrome" to use installed Chrome, "" for bundled chromium
+
 # Toggle individual scrapers. Disable any that are broken or noisy.
 sites:
   tixel: true
@@ -19,6 +31,34 @@ sites:
   viagogo: true
   vividseats: true
   seatgeek: true
+
+# Reddit r/MovementDEMF feed: alerts on new posts mentioning ticket
+# resale or after-party tickets. Uses Reddit OAuth (free script app).
+reddit:
+  enabled: true
+  subreddit: MovementDEMF
+  fetch_limit: 50
+  keywords:
+    - selling
+    - sell my
+    - for sale
+    - wts
+    - resale
+    - re-sell
+    - resell
+    - iso
+    - in search of
+    - looking for
+    - wristband
+    - 3-day
+    - 3 day
+    - saturday pass
+    - sunday pass
+    - monday pass
+    - after party
+    - after-party
+    - afterparty
+    - afters
 
 # State + log paths.
 state_db: state.db

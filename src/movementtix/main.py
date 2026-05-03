@@ -12,6 +12,7 @@ from .config import Config
 from .models import PassType
 from .notify import Telegram, format_alert
 from .pricing import should_alert
+from .reddit import poll_and_alert as reddit_poll_and_alert
 from .scrapers import ALL_SCRAPERS
 
 log = logging.getLogger("movementtix")
@@ -87,6 +88,16 @@ def run_once(cfg: Config, dry_run: bool, only_site: str | None,
                     log.info("  alert sent (%s)", reason.value)
                 except Exception as e:
                     log.exception("telegram send failed: %s", e)
+
+    # Reddit feed runs once per cycle (no per-pass-type loop)
+    if not only_site or only_site == "reddit":
+        try:
+            n = reddit_poll_and_alert(cfg, state, dry_run, tg)
+            if n:
+                log.info("reddit: %d alert(s) %s", n, "would send" if dry_run else "sent")
+        except Exception as e:
+            log.exception("reddit poll failed: %s", e)
+
     state.close()
 
 
