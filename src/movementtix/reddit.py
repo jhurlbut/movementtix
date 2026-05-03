@@ -17,7 +17,9 @@ from .state import State
 
 log = logging.getLogger(__name__)
 
-UA = "movementtix/0.1 by u/anonymous (personal ticket monitor)"
+def _user_agent(username: str) -> str:
+    who = f"u/{username}" if username else "anonymous"
+    return f"movementtix/0.1 by {who} (personal ticket monitor)"
 
 PRICE_RE = re.compile(r"\$\s?(\d{2,4}(?:\.\d{2})?)")
 AFTER_PARTY_RE = re.compile(r"after[\s-]?part(?:y|ies)|\bafters\b", re.IGNORECASE)
@@ -41,9 +43,10 @@ class RedditPost:
 class RedditClient:
     """Minimal app-only OAuth Reddit client."""
 
-    def __init__(self, client_id: str, client_secret: str):
+    def __init__(self, client_id: str, client_secret: str, username: str = ""):
         self.client_id = client_id
         self.client_secret = client_secret
+        self.user_agent = _user_agent(username)
         self._token: str | None = None
         self._token_expires: float = 0.0
 
@@ -59,7 +62,7 @@ class RedditClient:
             r = httpx.post(
                 "https://www.reddit.com/api/v1/access_token",
                 data={"grant_type": "client_credentials"},
-                headers={"Authorization": f"Basic {creds}", "User-Agent": UA},
+                headers={"Authorization": f"Basic {creds}", "User-Agent": self.user_agent},
                 timeout=15,
             )
             r.raise_for_status()
@@ -80,7 +83,7 @@ class RedditClient:
                 f"https://oauth.reddit.com/r/{subreddit}/new",
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "User-Agent": UA,
+                    "User-Agent": self.user_agent,
                 },
                 params={"limit": limit, "raw_json": 1},
                 timeout=15,
@@ -164,7 +167,9 @@ def poll_and_alert(cfg: Config, state: State, dry_run: bool, telegram) -> int:
         log.info("reddit: REDDIT_CLIENT_ID/SECRET not set; skipping")
         return 0
 
-    client = RedditClient(cfg.reddit_client_id, cfg.reddit_client_secret)
+    client = RedditClient(
+        cfg.reddit_client_id, cfg.reddit_client_secret, cfg.reddit_username
+    )
     posts = client.fetch_new(cfg.reddit.subreddit, cfg.reddit.fetch_limit)
     log.info("reddit: %d posts fetched from r/%s", len(posts), cfg.reddit.subreddit)
 

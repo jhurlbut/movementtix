@@ -85,6 +85,7 @@ class Config(BaseModel):
     seatgeek_client_id: str = ""
     reddit_client_id: str = ""
     reddit_client_secret: str = ""
+    reddit_username: str = ""
 
     @classmethod
     def load(cls, path: str | Path = "config.yaml") -> "Config":
@@ -99,6 +100,7 @@ class Config(BaseModel):
         cfg.seatgeek_client_id = os.getenv("SEATGEEK_CLIENT_ID", "")
         cfg.reddit_client_id = os.getenv("REDDIT_CLIENT_ID", "")
         cfg.reddit_client_secret = os.getenv("REDDIT_CLIENT_SECRET", "")
+        cfg.reddit_username = os.getenv("REDDIT_USERNAME", "")
         return cfg
 
 
