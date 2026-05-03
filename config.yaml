@@ -30,7 +30,7 @@ sites:
   stubhub: true
   viagogo: true
   vividseats: true
-  seatgeek: true
+  seatgeek: false   # SeatGeek doesn't list Movement 2026 — verified via /2/events search
 
 # Reddit r/MovementDEMF feed: alerts on new posts mentioning ticket
 # resale or after-party tickets. Uses Reddit OAuth (free script app).
