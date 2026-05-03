@@ -6,8 +6,6 @@ import random
 import signal
 import sys
 import time
-from logging.handlers import RotatingFileHandler
-
 from .config import Config
 from .models import PassType
 from .notify import Telegram, format_alert
@@ -19,14 +17,15 @@ log = logging.getLogger("movementtix")
 
 
 def _setup_logging(log_file: str, verbose: bool) -> None:
+    """Single StreamHandler to stdout. When run.sh nohups the process,
+    stdout is appended to movementtix.log; that file IS the log. Adding
+    a FileHandler here would double every line (both nohup and the
+    handler write to the same file)."""
     fmt = "%(asctime)s %(levelname)s %(name)s | %(message)s"
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
-    if log_file:
-        handlers.append(RotatingFileHandler(log_file, maxBytes=2_000_000, backupCount=3))
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format=fmt,
-        handlers=handlers,
+        handlers=[logging.StreamHandler(sys.stdout)],
         force=True,
     )
 
@@ -45,13 +44,15 @@ def _build_scrapers(cfg: Config, only: str | None) -> list:
 
 
 def run_once(cfg: Config, dry_run: bool, only_site: str | None,
-             only_pass: str | None) -> None:
+             only_pass: str | None) -> list:
+    """Run one full sweep. Returns the list of Listings collected this cycle."""
     from .state import State
     state = State(cfg.state_db)
     tg = Telegram(cfg.telegram_bot_token, cfg.telegram_chat_id)
     pass_types = (
         [PassType(only_pass)] if only_pass else [PassType.THREE_DAY, PassType.SATURDAY]
     )
+    cycle: list = []
 
     for scraper in _build_scrapers(cfg, only_site):
         for pt in pass_types:
@@ -63,6 +64,7 @@ def run_once(cfg: Config, dry_run: bool, only_site: str | None,
                 continue
             if not listing:
                 continue
+            cycle.append(listing)
             prior_min = state.prior_min(scraper.name, pt)
             state.record(listing)
             log.info(
@@ -99,6 +101,7 @@ def run_once(cfg: Config, dry_run: bool, only_site: str | None,
             log.exception("reddit poll failed: %s", e)
 
     state.close()
+    return cycle
 
 
 _running = True
@@ -108,6 +111,34 @@ def _stop(*_):
     global _running
     _running = False
     log.info("shutdown signal received")
+
+
+def _format_startup_summary(cfg: Config, cycle: list) -> str:
+    """Group the cycle's cheapest by pass type and render a short Telegram
+    snapshot."""
+    from .models import PassType as _PT
+    by_pt: dict = {_PT.THREE_DAY: [], _PT.SATURDAY: []}
+    for listing in cycle:
+        by_pt.setdefault(listing.pass_type, []).append(listing)
+
+    lines = ["*movementtix tracker started*", ""]
+    for pt in (_PT.THREE_DAY, _PT.SATURDAY):
+        items = sorted(by_pt.get(pt, []), key=lambda x: x.total_price)
+        cap = cfg.caps.for_pass(pt)
+        lines.append(f"_{pt.display}_  (cap ${cap:.0f})")
+        if not items:
+            lines.append("  no listings found")
+        else:
+            for it in items[:6]:
+                section = f" {it.section}" if it.section else ""
+                lines.append(
+                    f"  `{it.site}` ${it.total_price:.2f}{section}"
+                )
+        lines.append("")
+    lines.append(
+        f"Polling every {cfg.poll_seconds.min // 60}–{cfg.poll_seconds.max // 60} min."
+    )
+    return "\n".join(lines)
 
 
 def run_forever(cfg: Config, dry_run: bool, only_site: str | None,
@@ -122,8 +153,21 @@ def run_forever(cfg: Config, dry_run: bool, only_site: str | None,
         cfg.poll_seconds.min,
         cfg.poll_seconds.max,
     )
+    tg = Telegram(cfg.telegram_bot_token, cfg.telegram_chat_id)
+    first_cycle = True
     while _running:
-        run_once(cfg, dry_run, only_site, only_pass)
+        cycle = run_once(cfg, dry_run, only_site, only_pass)
+        if first_cycle:
+            first_cycle = False
+            summary = _format_startup_summary(cfg, cycle)
+            if dry_run:
+                log.info("[dry-run] startup summary:\n%s", summary)
+            else:
+                try:
+                    tg.send_message(summary)
+                    log.info("startup summary sent (%d listings)", len(cycle))
+                except Exception as e:
+                    log.exception("startup summary send failed: %s", e)
         if not _running:
             break
         delay = random.uniform(cfg.poll_seconds.min, cfg.poll_seconds.max)
