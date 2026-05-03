@@ -1,6 +1,8 @@
 .env
 state.db
 state.db-journal
+state.db-shm
+state.db-wal
 movementtix.log
 movementtix.pid
 chrome.log
