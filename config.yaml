@@ -1,0 +1,25 @@
+# Per-pass-type alert caps (USD, all-in including fees).
+caps:
+  three_day: 300.0
+  saturday: 150.0
+
+# Polling: pick a uniform random delay in this range between site fetches.
+poll_seconds:
+  min: 300   # 5 min
+  max: 600   # 10 min
+
+# Don't re-alert the same listing within this many hours.
+alert_dedupe_hours: 6
+
+# Toggle individual scrapers. Disable any that are broken or noisy.
+sites:
+  tixel: true
+  axs: true
+  stubhub: true
+  viagogo: true
+  vividseats: true
+  seatgeek: true
+
+# State + log paths.
+state_db: state.db
+log_file: movementtix.log

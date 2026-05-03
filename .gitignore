@@ -1,0 +1,13 @@
+.env
+state.db
+state.db-journal
+movementtix.log
+movementtix.pid
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
