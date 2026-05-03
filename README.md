@@ -18,6 +18,8 @@ playwright install chromium    # only if you keep AXS/Viagogo enabled
 
 cp .env.example .env           # then fill in your creds
 $EDITOR config.yaml            # tweak caps / poll cadence / which sites
+
+./start_chrome.sh              # launch persistent chrome on port 9222
 ```
 
 ### Required env vars (`.env`)
@@ -71,45 +73,58 @@ systemctl --user daemon-reload
 systemctl --user enable --now movementtix.service
 ```
 
-## Using your real Chrome (recommended for AXS / Viagogo)
+## Chrome relay (CDP)
 
-These two sites sit behind Datadome and routinely block headless browsers.
-The fix: have Playwright drive **your** logged-in Chrome instead.
-
-### Mode 1 — Attach to a running Chrome (most reliable)
+A long-lived Chrome (or Chromium) keeps a persistent profile so the
+scraper inherits cookies + fingerprint. Two helper scripts manage it:
 
 ```bash
-# Quit Chrome first, then start it with a debugging port:
-google-chrome \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/.movementtix-chrome"
-# (on macOS) /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-#              --remote-debugging-port=9222 \
-#              --user-data-dir="$HOME/.movementtix-chrome"
-
-# In config.yaml:
-browser:
-  cdp_url: "http://localhost:9222"
+./start_chrome.sh        # launches chrome with --remote-debugging-port=9222
+./stop_chrome.sh         # kills it
 ```
 
-The first time you run, browse to viagogo.com / axs.com manually, accept any
-challenges, and log in if you want. The session persists in the
-`--user-data-dir` you pointed at.
-
-### Mode 2 — Persistent profile launched by Playwright
+`config.yaml` is preconfigured:
 
 ```yaml
-# config.yaml
 browser:
-  user_data_dir: "/Users/you/.movementtix-chrome"
-  channel: "chrome"   # use installed Chrome instead of bundled chromium
-  headless: false     # show the window so you can solve any first-time challenge
+  cdp_url: "http://127.0.0.1:9222"
 ```
 
-### Mode 3 — Default ephemeral headless
+The script will auto-discover Chrome in this order: `MOVEMENTTIX_CHROME_BIN`
+env var → `google-chrome` → `chromium` → bundled Playwright Chromium →
+`/Applications/Google Chrome.app/...` (macOS).
 
-Leave both `cdp_url` and `user_data_dir` blank. Expect frequent blocks
-from AXS/Viagogo; the other four scrapers are unaffected.
+### Honest reality check on relay effectiveness
+
+The relay infrastructure works (Playwright attaches and drives the page),
+**but** the headless Chrome on a server (no display, no GUI) is still
+detectable by Cloudflare/Datadome. Concretely:
+
+| Site | Through CDP relay |
+| --- | --- |
+| **Tixel** | ✅ works without relay; relay irrelevant |
+| **Vivid Seats** | ✅ works without relay; relay irrelevant |
+| **SeatGeek** | ✅ official API, no browser needed |
+| **AXS** | ⚠️ page loads, but prices are loaded in a separate JS modal — not in the DOM |
+| **Viagogo** | ⚠️ landing page redirects; needs the specific Movement event URL filled in to `EVENT_IDS` |
+| **StubHub** | ⚠️ event-id discovery regex needs updating to match current HTML |
+
+To get full AXS/Viagogo bypass you'd need either (a) a non-headless
+Chrome on a real desktop with `xvfb` or a graphical session, or (b) a
+paid scraping service like ScrapingBee/ZenRows. **Tixel + Vivid Seats +
+the Reddit feed already cover the bulk of cheap-ticket activity.**
+
+### Alternative: tunnel from your laptop
+
+If your laptop has a real Chrome session, run on your laptop:
+
+```bash
+google-chrome --remote-debugging-port=9222 --user-data-dir=~/.movementtix-chrome
+ssh -R 9222:localhost:9222 user@server  # reverse tunnel
+```
+
+Then on the server set `cdp_url: http://127.0.0.1:9222`. The script
+drives **your** real Chrome, which clears CF/Datadome reliably.
 
 ## Configuration (`config.yaml`)
 

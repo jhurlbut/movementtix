@@ -40,20 +40,24 @@ def open_page(cfg: BrowserConfig, *, stealth: bool = True) -> Iterator:
     pw = sync_playwright().start()
     browser = None
     context = None
+    page = None
+    launch_failed = False
     try:
         if cfg.cdp_url:
             log.info("browser: attaching to CDP at %s", cfg.cdp_url)
             browser = pw.chromium.connect_over_cdp(cfg.cdp_url)
-            context = browser.contexts[0] if browser.contexts else browser.new_context()
+            context = (
+                browser.contexts[0]
+                if browser.contexts
+                else browser.new_context(ignore_https_errors=True)
+            )
             page = context.new_page()
         elif cfg.user_data_dir:
             log.info("browser: persistent context at %s", cfg.user_data_dir)
-            launch_kwargs = {"headless": cfg.headless}
+            kwargs = {"headless": cfg.headless, "ignore_https_errors": True}
             if cfg.channel:
-                launch_kwargs["channel"] = cfg.channel
-            context = pw.chromium.launch_persistent_context(
-                cfg.user_data_dir, **launch_kwargs
-            )
+                kwargs["channel"] = cfg.channel
+            context = pw.chromium.launch_persistent_context(cfg.user_data_dir, **kwargs)
             page = context.new_page()
         else:
             log.info("browser: ephemeral headless chromium (no profile)")
@@ -61,28 +65,35 @@ def open_page(cfg: BrowserConfig, *, stealth: bool = True) -> Iterator:
             if cfg.channel:
                 launch_kwargs["channel"] = cfg.channel
             browser = pw.chromium.launch(**launch_kwargs)
-            context = browser.new_context()
+            context = browser.new_context(ignore_https_errors=True)
             page = context.new_page()
 
-        if stealth:
+        if stealth and page is not None:
             try:
                 from playwright_stealth import stealth_sync  # type: ignore
                 stealth_sync(page)
             except ImportError:
                 pass
-
-        yield page
     except Exception as e:
         log.warning("browser launch failed: %s", e)
-        yield None
+        launch_failed = True
+
+    try:
+        yield (None if launch_failed else page)
     finally:
+        # Only tear down what we created — don't kill an attached CDP browser.
         try:
-            if context and not cfg.cdp_url:
+            if page is not None and cfg.cdp_url:
+                page.close()
+        except Exception:
+            pass
+        try:
+            if context is not None and not cfg.cdp_url:
                 context.close()
         except Exception:
             pass
         try:
-            if browser and not cfg.cdp_url:
+            if browser is not None and not cfg.cdp_url:
                 browser.close()
         except Exception:
             pass

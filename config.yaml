@@ -18,7 +18,7 @@ alert_dedupe_hours: 6
 #      runs. Safer than CDP if you don't want to share your real Chrome.
 #   3. neither set → ephemeral headless Chromium (default; lowest success rate).
 browser:
-  cdp_url: ""           # e.g. "http://localhost:9222"
+  cdp_url: "http://127.0.0.1:9222"  # set to "" to disable; run ./start_chrome.sh first
   user_data_dir: ""     # e.g. "/Users/you/.movementtix-chrome"
   headless: true        # ignored when cdp_url is set
   channel: ""           # "chrome" to use installed Chrome, "" for bundled chromium

@@ -40,16 +40,15 @@ class AxsScraper(Scraper):
             raw={"event_id": event_id},
         )
 
+    MIN_PRICE = 50.0  # skip junk $0 matches; face value pass is $169+
+
     def _fetch_static(self, url: str) -> float | None:
         try:
             with self._client() as client:
                 r = client.get(url)
                 if r.status_code != 200:
                     return None
-                m = re.search(r'"price"\s*:\s*"?\$?(\d+(?:\.\d{1,2})?)"?', r.text)
-                if not m:
-                    m = re.search(r'\$\s*(\d{2,4}(?:\.\d{2})?)', r.text)
-                return float(m.group(1)) if m else None
+                return self._extract(r.text)
         except Exception as e:
             log.info("axs static fetch failed: %s", e)
             return None
@@ -60,10 +59,28 @@ class AxsScraper(Scraper):
                 return None
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(2500)
+                # Wait up to 15s for the Cloudflare interstitial to resolve.
+                for _ in range(15):
+                    title = (page.title() or "").lower()
+                    if "just a moment" not in title and title:
+                        break
+                    page.wait_for_timeout(1000)
+                page.wait_for_timeout(1500)
                 content = page.content()
             except Exception as e:
                 log.info("axs browser fetch failed: %s", e)
                 return None
-        prices = [float(m) for m in re.findall(r'\$\s*(\d{2,4}(?:\.\d{2})?)', content)]
-        return min(prices) if prices else None
+        if "just a moment" in (content[:2000].lower()):
+            log.info("axs: Cloudflare challenge did not clear")
+            return None
+        return self._extract(content)
+
+    @classmethod
+    def _extract(cls, html: str) -> float | None:
+        candidates: list[float] = []
+        for m in re.finditer(r'"(?:price|startingPrice|minPrice)"\s*:\s*"?\$?(\d+(?:\.\d{1,2})?)"?', html):
+            candidates.append(float(m.group(1)))
+        for m in re.finditer(r'\$\s*(\d{2,4}(?:\.\d{2})?)', html):
+            candidates.append(float(m.group(1)))
+        viable = [p for p in candidates if p >= cls.MIN_PRICE]
+        return min(viable) if viable else None

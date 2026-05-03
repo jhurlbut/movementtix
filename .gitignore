@@ -3,6 +3,8 @@ state.db
 state.db-journal
 movementtix.log
 movementtix.pid
+chrome.log
+chrome.pid
 __pycache__/
 *.py[cod]
 .venv/
