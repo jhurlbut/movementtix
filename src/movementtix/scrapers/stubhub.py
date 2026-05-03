@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 import re
 
-import httpx
-
 from ..config import EVENT_IDS
 from ..models import Listing, PassType
 from ..pricing import estimate_fees
@@ -12,9 +10,6 @@ from .base import Scraper
 
 log = logging.getLogger(__name__)
 
-# Public StubHub group page; per-event IDs are discovered by scraping the
-# group page once and filtering for "3 Day" / "Saturday" titles. Hard-coding
-# the IDs in EVENT_IDS short-circuits the discovery step on later runs.
 GROUP_URL = (
     "https://www.stubhub.com/movement-electronic-music-festival-tickets/"
     "grouping/713495/"
@@ -26,20 +21,23 @@ class StubHubScraper(Scraper):
 
     def fetch_lowest(self, pass_type: PassType) -> Listing | None:
         event_id = EVENT_IDS["stubhub"].get(pass_type, "")
-        try:
-            with self._client(headers={"Referer": "https://www.stubhub.com/"}) as client:
-                if not event_id:
-                    event_id = self._discover_event_id(client, pass_type)
-                if not event_id:
-                    log.info("stubhub: no event id resolved for %s", pass_type.value)
-                    return None
-                listings = self._fetch_listings(client, event_id)
-        except httpx.HTTPError as e:
-            log.warning("stubhub fetch failed: %s", e)
+        if not event_id:
+            event_id = self._discover_event_id(pass_type)
+        if not event_id:
+            log.info("stubhub: no event id resolved for %s", pass_type.value)
             return None
 
+        data = self._fetch_json(
+            f"https://www.stubhub.com/_marketplace/event/{event_id}/listings",
+            params={"q": 0, "qty": 1, "sort": "currentprice asc"},
+            headers={"Referer": "https://www.stubhub.com/"},
+        )
+        if not isinstance(data, dict):
+            return None
+        listings = self._normalize_listings(data.get("listings", []) or [])
         if not listings:
             return None
+
         cheapest = min(listings, key=lambda x: x["price"])
         base = float(cheapest["price"])
         return Listing(
@@ -53,15 +51,15 @@ class StubHubScraper(Scraper):
             raw=cheapest,
         )
 
-    def _discover_event_id(self, client: httpx.Client, pass_type: PassType) -> str:
-        r = client.get(GROUP_URL)
-        r.raise_for_status()
-        html = r.text
-        # Group page lists events with /event/<id> hrefs and human titles.
-        candidates = re.findall(
-            r'href="(/event/(\d+)[^"]*)"[^>]*>([^<]+)</a>', html, re.IGNORECASE
-        )
-        for _href, eid, title in candidates:
+    def _discover_event_id(self, pass_type: PassType) -> str:
+        html = self._fetch_html(GROUP_URL, wait_ms=2000)
+        if not html:
+            return ""
+        for _href, eid, title in re.findall(
+            r'href="(/event/(\d+)[^"]*)"[^>]*>([^<]+)</a>',
+            html,
+            re.IGNORECASE,
+        ):
             t = title.lower()
             if pass_type is PassType.THREE_DAY and ("3 day" in t or "3-day" in t):
                 return eid
@@ -69,19 +67,10 @@ class StubHubScraper(Scraper):
                 return eid
         return ""
 
-    def _fetch_listings(self, client: httpx.Client, event_id: str) -> list[dict]:
-        # StubHub exposes an internal listings endpoint; URL shape may change.
-        url = f"https://www.stubhub.com/_marketplace/event/{event_id}/listings"
-        r = client.get(url, params={"q": 0, "qty": 1, "sort": "currentprice asc"})
-        if r.status_code != 200:
-            log.info("stubhub listings %s: HTTP %s", event_id, r.status_code)
-            return []
-        try:
-            data = r.json()
-        except ValueError:
-            return []
+    @staticmethod
+    def _normalize_listings(rows: list) -> list[dict]:
         out: list[dict] = []
-        for grid in data.get("listings", []) or []:
+        for grid in rows:
             price = grid.get("currentPrice", {}).get("amount") or grid.get("price")
             if price is None:
                 continue

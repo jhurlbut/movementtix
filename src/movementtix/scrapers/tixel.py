@@ -5,8 +5,6 @@ import logging
 import re
 from typing import Any
 
-import httpx
-
 from ..models import Listing, PassType
 from .base import Scraper
 
@@ -14,7 +12,6 @@ log = logging.getLogger(__name__)
 
 EVENT_URL = "https://tixel.com/us/music-tickets/2026/05/23/movement-2026"
 
-# Tixel's category.group strings → our PassType
 GROUP_MAP = {
     "3-Day": PassType.THREE_DAY,
     "3 Day": PassType.THREE_DAY,
@@ -28,8 +25,6 @@ PAYLOAD_RE = re.compile(
 
 
 def _resolve(P: list, x: Any) -> Any:
-    """Resolve a value from Tixel's flat Nuxt payload by dereferencing
-    integer indices into the pool. Returns the value or None."""
     if isinstance(x, int):
         if 0 <= x < len(P):
             return P[x]
@@ -41,15 +36,11 @@ class TixelScraper(Scraper):
     name = "tixel"
 
     def fetch_lowest(self, pass_type: PassType) -> Listing | None:
-        try:
-            with self._client(headers={"Referer": "https://tixel.com/"}) as client:
-                r = client.get(EVENT_URL)
-                r.raise_for_status()
-                payload = self._extract_payload(r.text)
-        except (httpx.HTTPError, ValueError) as e:
-            log.warning("tixel fetch failed: %s", e)
+        html = self._fetch_html(EVENT_URL, wait_ms=1500)
+        if not html:
             return None
 
+        payload = self._extract_payload(html)
         if not payload:
             log.warning("tixel: payload not found on page")
             return None
@@ -91,8 +82,7 @@ class TixelScraper(Scraper):
         tickets_meta = _resolve(P, event["tickets"])
         if not isinstance(tickets_meta, dict):
             return
-        avail_idx = tickets_meta.get("available")
-        ticket_pool = _resolve(P, avail_idx)
+        ticket_pool = _resolve(P, tickets_meta.get("available"))
         if not isinstance(ticket_pool, list):
             return
 

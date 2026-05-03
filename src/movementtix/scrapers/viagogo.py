@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import re
 
-from ..browser import open_page
 from ..config import EVENT_IDS
 from ..models import Listing, PassType
 from ..pricing import estimate_fees
@@ -27,45 +26,25 @@ class ViagogoScraper(Scraper):
             if event_id
             else SEARCH_URL
         )
-        price = self._fetch_with_browser(url, pass_type)
-        if price is None:
-            log.info("viagogo: no price extracted (likely Datadome block)")
+        html = self._fetch_html(url, wait_ms=3500)
+        if not html:
             return None
+        if "datadome" in html.lower() or "captcha" in html.lower():
+            log.info("viagogo: anti-bot challenge — try a real-Chrome relay")
+            return None
+        prices = [float(m) for m in re.findall(r'\$\s*(\d{2,4}(?:\.\d{2})?)', html)]
+        viable = [p for p in prices if p >= 30.0]
+        if not viable:
+            log.info("viagogo: no inline prices found")
+            return None
+        base = min(viable)
         return Listing(
             site=self.name,
             pass_type=pass_type,
-            base_price=price,
-            fees=estimate_fees(price, self.name),
+            base_price=base,
+            fees=estimate_fees(base, self.name),
             quantity=1,
             url=url,
             section=None,
             raw={"event_id": event_id, "source_url": url},
         )
-
-    def _fetch_with_browser(self, url: str, pass_type: PassType) -> float | None:
-        with open_page(self.config.browser) as page:
-            if page is None:
-                return None
-            try:
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(3500)
-                if pass_type is PassType.SATURDAY and "Movement" in page.url:
-                    self._click_saturday(page)
-                content = page.content()
-            except Exception as e:
-                log.info("viagogo browser fetch failed: %s", e)
-                return None
-
-        if "datadome" in content.lower() or "captcha" in content.lower():
-            log.info("viagogo: hit anti-bot challenge — try CDP / user_data_dir mode")
-            return None
-        prices = [float(m) for m in re.findall(r'\$\s*(\d{2,4}(?:\.\d{2})?)', content)]
-        return min(prices) if prices else None
-
-    @staticmethod
-    def _click_saturday(page) -> None:
-        try:
-            page.get_by_text("Saturday", exact=False).first.click(timeout=2500)
-            page.wait_for_timeout(1500)
-        except Exception:
-            pass

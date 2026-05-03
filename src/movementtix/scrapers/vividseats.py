@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 import re
 
-import httpx
-
 from ..config import EVENT_IDS
 from ..models import Listing, PassType
 from ..pricing import estimate_fees
@@ -20,20 +18,22 @@ class VividSeatsScraper(Scraper):
 
     def fetch_lowest(self, pass_type: PassType) -> Listing | None:
         production_id = EVENT_IDS["vividseats"].get(pass_type, "")
-        try:
-            with self._client(headers={"Referer": "https://www.vividseats.com/"}) as client:
-                if not production_id:
-                    production_id = self._discover_production(client, pass_type)
-                if not production_id:
-                    log.info("vividseats: no production for %s", pass_type.value)
-                    return None
-                tickets = self._fetch_tickets(client, production_id)
-        except httpx.HTTPError as e:
-            log.warning("vividseats fetch failed: %s", e)
+        if not production_id:
+            production_id = self._discover_production(pass_type)
+        if not production_id:
+            log.info("vividseats: no production for %s", pass_type.value)
             return None
 
+        data = self._fetch_json(
+            "https://www.vividseats.com/hermes/api/v1/listings",
+            params={"productionId": production_id},
+        )
+        if not isinstance(data, dict):
+            return None
+        tickets = self._normalize_tickets(data.get("tickets", []) or [])
         if not tickets:
             return None
+
         cheapest = min(tickets, key=lambda t: t["price"])
         base = float(cheapest["price"])
         return Listing(
@@ -47,13 +47,15 @@ class VividSeatsScraper(Scraper):
             raw=cheapest,
         )
 
-    def _discover_production(self, client: httpx.Client, pass_type: PassType) -> str:
-        r = client.get(PERFORMER_URL)
-        r.raise_for_status()
-        candidates = re.findall(
-            r'href="(/[^"]*?/production/(\d+)[^"]*)"[^>]*>([^<]+)<', r.text, re.IGNORECASE
-        )
-        for _href, pid, title in candidates:
+    def _discover_production(self, pass_type: PassType) -> str:
+        html = self._fetch_html(PERFORMER_URL, wait_ms=1500)
+        if not html:
+            return ""
+        for _href, pid, title in re.findall(
+            r'href="(/[^"]*?/production/(\d+)[^"]*)"[^>]*>([^<]+)<',
+            html,
+            re.IGNORECASE,
+        ):
             t = title.lower()
             if pass_type is PassType.THREE_DAY and ("3 day" in t or "3-day" in t):
                 return pid
@@ -61,18 +63,10 @@ class VividSeatsScraper(Scraper):
                 return pid
         return ""
 
-    def _fetch_tickets(self, client: httpx.Client, production_id: str) -> list[dict]:
-        url = f"https://www.vividseats.com/hermes/api/v1/listings"
-        r = client.get(url, params={"productionId": production_id})
-        if r.status_code != 200:
-            log.info("vividseats listings %s: HTTP %s", production_id, r.status_code)
-            return []
-        try:
-            data = r.json()
-        except ValueError:
-            return []
+    @staticmethod
+    def _normalize_tickets(rows: list) -> list[dict]:
         out: list[dict] = []
-        for t in data.get("tickets", []) or []:
+        for t in rows:
             price = t.get("price") or t.get("p")
             if price is None:
                 continue
