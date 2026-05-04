@@ -41,12 +41,19 @@ class StubHubScraper(Scraper):
         )
 
     def _fetch_listings_dom(self, url: str) -> list[dict]:
-        with open_page(self.config.browser, stealth=False) as page:
+        # StubHub event pages are gated behind AWS WAF (the awswaf.com
+        # `mp_verify` endpoint fingerprints the browser). Headless Chromium
+        # — even with playwright-stealth — gets the page chrome but no
+        # listings: `[data-testid="listings-container"]` ends up with empty
+        # placeholder children only. Without a residential proxy or paid
+        # browser-as-a-service this scraper is effectively dead. We still
+        # try, and surface the WAF block clearly when it fires.
+        with open_page(self.config.browser, stealth=True, force_headed=True) as page:
             if page is None:
                 return []
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(5000)
+                page.wait_for_timeout(8000)
                 rows = page.evaluate(
                     """
 () => {
@@ -56,7 +63,12 @@ class StubHubScraper(Scraper):
     const text = (el.innerText || '').trim().replace(/\\s+/g, ' ');
     if (id && /\\$\\d/.test(text)) out.push({id, text});
   });
-  return out;
+  const c = document.querySelector('[data-testid="listings-container"]');
+  const placeholders = c ? Array.from(c.children).filter(el =>
+    el.children.length === 0 && (el.innerText || '').trim() === ''
+  ).length : 0;
+  const showing = (document.body.innerText.match(/Showing\\s+\\d+\\s+of\\s+\\d+/) || [''])[0];
+  return {rows: out, container_present: !!c, empty_placeholders: placeholders, showing};
 }
 """
                 )
@@ -64,8 +76,17 @@ class StubHubScraper(Scraper):
                 log.info("stubhub browser fetch failed: %s", e)
                 return []
 
+        parsed_rows = rows.get("rows", []) if isinstance(rows, dict) else (rows or [])
+        if isinstance(rows, dict) and not parsed_rows and rows.get("container_present"):
+            log.warning(
+                "stubhub: WAF/bot block — listings-container has %d empty"
+                " placeholders, page reports %r",
+                rows.get("empty_placeholders") or 0,
+                rows.get("showing") or "(no count)",
+            )
+
         parsed: list[dict] = []
-        for r in rows:
+        for r in parsed_rows:
             p = self._parse_card(r["text"])
             if p:
                 p["listing_id"] = r["id"]

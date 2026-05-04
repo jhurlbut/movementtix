@@ -68,6 +68,12 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: playwright install-deps chromium
 
+      # Xvfb provides a virtual X display so we can launch the *full*
+      # Chromium binary with `headless=False`. Required to bypass AWS
+      # WAF on StubHub, which fingerprints headless-shell. <1s overhead.
+      - name: Install Xvfb
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+
       # Restore prior state.db (price history + alert dedupe). On first
       # run this misses cleanly and the script creates a fresh DB.
       - name: Restore state.db
@@ -95,7 +101,7 @@ jobs:
           if [[ -n "${{ inputs.site }}" ]]; then
             ARGS="$ARGS --site ${{ inputs.site }}"
           fi
-          python -m movementtix.main $ARGS
+          xvfb-run -a -s "-screen 0 1280x800x24" python -m movementtix.main $ARGS
 
       # Always save state — even if a scraper hit a transient error,
       # the DB may still have new "min seen" rows worth keeping.
