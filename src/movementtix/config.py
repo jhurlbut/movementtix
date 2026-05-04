@@ -121,7 +121,11 @@ EVENT_IDS: dict[str, dict[PassType, str]] = {
         PassType.THREE_DAY: "159631798",
         PassType.SATURDAY: "159867649",
     },
-    "viagogo": {PassType.THREE_DAY: "", PassType.SATURDAY: ""},
+    # Viagogo and StubHub share inventory and use the same numeric event ID.
+    "viagogo": {
+        PassType.THREE_DAY: "159631798",
+        PassType.SATURDAY: "159867649",
+    },
     # SeatGeek scraper resolves IDs at runtime via the events search API.
     "seatgeek": {PassType.THREE_DAY: "", PassType.SATURDAY: ""},
 }
