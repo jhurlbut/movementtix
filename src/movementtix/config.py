@@ -25,6 +25,7 @@ class PollSeconds(BaseModel):
 
 class Sites(BaseModel):
     tixel: bool = True
+    eventim: bool = True
     axs: bool = True
     stubhub: bool = True
     viagogo: bool = True
