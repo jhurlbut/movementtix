@@ -131,8 +131,13 @@ def _format_startup_summary(cfg: Config, cycle: list) -> str:
         else:
             for it in items[:6]:
                 section = f" {it.section}" if it.section else ""
+                qty_note = (
+                    f" ×{it.quantity} = ${it.total_price * it.quantity:,.2f}"
+                    if it.quantity > 1
+                    else ""
+                )
                 lines.append(
-                    f"  `{it.site}` ${it.total_price:.2f}{section}"
+                    f"  `{it.site}` ${it.total_price:.2f}/tix{qty_note}{section}"
                 )
         lines.append("")
     lines.append(
