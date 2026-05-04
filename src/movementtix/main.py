@@ -43,12 +43,47 @@ def _build_scrapers(cfg: Config, only: str | None) -> list:
     return out
 
 
+def _fanout(tg: Telegram, state, text: str, dry_run: bool, label: str) -> int:
+    """Broadcast a Markdown message to every active subscriber.
+
+    Auto-deactivates chats that 400/403 (blocked / not found). Returns
+    the number of successful deliveries. In dry_run mode, just logs."""
+    subs = state.active_subscribers()
+    if not subs:
+        log.info("  no subscribers to send %s to", label)
+        return 0
+    if dry_run:
+        log.info("  [dry-run] would fanout %s to %d sub(s):\n%s",
+                 label, len(subs), text)
+        return 0
+    sent, dead = tg.fanout(text, subs)
+    for cid in dead:
+        state.remove_subscriber(cid)
+    if dead:
+        log.info("  deactivated %d unreachable subscriber(s): %s", len(dead), dead)
+    log.info("  fanout %s sent to %d/%d", label, sent, len(subs))
+    return sent
+
+
 def run_once(cfg: Config, dry_run: bool, only_site: str | None,
              only_pass: str | None) -> list:
     """Run one full sweep. Returns the list of Listings collected this cycle."""
     from .state import State
+    from .commands import process_pending as process_commands
+
     state = State(cfg.state_db)
     tg = Telegram(cfg.telegram_bot_token, cfg.telegram_chat_id)
+
+    # 1. Drain any /start, /stop, /help queued in Telegram before we send.
+    # Always run this — dry-run gates alert fanout, not user service.
+    try:
+        n = process_commands(tg, state)
+        if n:
+            log.info("processed %d command(s); subscribers=%d",
+                     n, state.subscriber_count())
+    except Exception as e:
+        log.exception("command poll failed: %s", e)
+
     pass_types = (
         [PassType(only_pass)] if only_pass else [PassType.THREE_DAY, PassType.SATURDAY]
     )
@@ -81,15 +116,10 @@ def run_once(cfg: Config, dry_run: bool, only_site: str | None,
                 log.info("  alert suppressed (dedupe)")
                 continue
             text = format_alert(listing, reason, prior_min)
-            if dry_run:
-                log.info("  [dry-run] would send:\n%s", text)
-            else:
-                try:
-                    tg.send_message(text)
-                    state.mark_alerted(listing)
-                    log.info("  alert sent (%s)", reason.value)
-                except Exception as e:
-                    log.exception("telegram send failed: %s", e)
+            sent = _fanout(tg, state, text, dry_run,
+                           label=f"alert ({reason.value} {scraper.name}/{pt.value})")
+            if not dry_run and sent >= 0:
+                state.mark_alerted(listing)
 
     # Reddit feed runs once per cycle (no per-pass-type loop)
     if not only_site or only_site == "reddit":
