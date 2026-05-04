@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import socket
 import sys
 
 import httpx
@@ -10,6 +12,21 @@ from .config import Config
 from .models import AlertReason, Listing
 
 log = logging.getLogger(__name__)
+
+
+def source_tag() -> str:
+    """Identify which deployment sent a Telegram message. Auto-detects:
+      - GitHub Actions: links to the actual run.
+      - Otherwise: 'local-daemon (<hostname>)'.
+    """
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        repo = os.getenv("GITHUB_REPOSITORY", "")
+        run_id = os.getenv("GITHUB_RUN_ID", "")
+        server = os.getenv("GITHUB_SERVER_URL", "https://github.com")
+        if repo and run_id:
+            return f"_via [gh-actions #{run_id}]({server}/{repo}/actions/runs/{run_id})_"
+        return "_via gh-actions_"
+    return f"_via local-daemon ({socket.gethostname()})_"
 
 
 class Telegram:
@@ -51,16 +68,23 @@ def format_alert(listing: Listing, reason: AlertReason, prior_min: float | None)
         AlertReason.NEW_LOW: "New all-time low",
     }[reason]
     prior = f"prev low ${prior_min:.2f}" if prior_min is not None else "first sighting"
+    qty = listing.quantity
+    group_total_line = ""
+    if qty > 1:
+        group = listing.total_price * qty
+        group_total_line = f"Group total ({qty}× tix): *${group:,.2f}*\n"
     return (
         f"*Movement 2026 — {reason_label}*\n"
         f"{listing.pass_type.display}\n"
         f"Site: `{listing.site}`\n"
-        f"Price: *${listing.total_price:.2f}* "
+        f"Price/ticket: *${listing.total_price:.2f}* "
         f"(${listing.base_price:.2f} + ${listing.fees:.2f} fees)\n"
-        f"Qty: {listing.quantity}"
+        + group_total_line
+        + f"Qty: {qty}"
         + (f"  Sec: {listing.section}" if listing.section else "")
         + f"\n[Open listing]({listing.url})\n"
-        f"_{prior}_"
+        f"_{prior}_\n"
+        f"{source_tag()}"
     )
 
 

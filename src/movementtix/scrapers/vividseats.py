@@ -12,6 +12,20 @@ log = logging.getLogger(__name__)
 
 PERFORMER_URL = "https://www.vividseats.com/movement-music-festival-tickets/performer/75359"
 
+# Vivid Seats event pages 404 if you visit /production/<id> directly —
+# they require the full slug. Hardcode the verified-working full URLs
+# alongside the production IDs in config.EVENT_IDS.
+EVENT_URLS: dict[PassType, str] = {
+    PassType.THREE_DAY: (
+        "https://www.vividseats.com/movement-music-festival-tickets-"
+        "detroit-hart-plaza-5-23-2026--concerts-music-festivals/production/6136478"
+    ),
+    PassType.SATURDAY: (
+        "https://www.vividseats.com/movement-music-festival-tickets-"
+        "detroit-hart-plaza-5-23-2026/production/6482557"
+    ),
+}
+
 
 class VividSeatsScraper(Scraper):
     name = "vividseats"
@@ -42,7 +56,7 @@ class VividSeatsScraper(Scraper):
             base_price=base,
             fees=estimate_fees(base, self.name),
             quantity=int(cheapest.get("quantity", 1)),
-            url=f"https://www.vividseats.com/production/{production_id}",
+            url=EVENT_URLS.get(pass_type) or f"https://www.vividseats.com/production/{production_id}",
             section=cheapest.get("section"),
             raw=cheapest,
         )

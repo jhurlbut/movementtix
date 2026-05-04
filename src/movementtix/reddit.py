@@ -135,6 +135,7 @@ def classify(post: RedditPost) -> str:
 
 
 def format_post(post: RedditPost, kind: str) -> str:
+    from .notify import source_tag
     body = post.selftext.strip().replace("\n\n", "\n")
     if len(body) > 350:
         body = body[:350].rstrip() + "…"
@@ -152,7 +153,8 @@ def format_post(post: RedditPost, kind: str) -> str:
         + (f"u/{post.author}\n" if post.author else "")
         + price_line
         + (f"\n{body}\n\n" if body else "\n")
-        + f"[Open thread]({post.url})"
+        + f"[Open thread]({post.url})\n"
+        + source_tag()
     )
 
 

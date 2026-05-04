@@ -8,7 +8,7 @@ import sys
 import time
 from .config import Config
 from .models import PassType
-from .notify import Telegram, format_alert
+from .notify import Telegram, format_alert, source_tag
 from .pricing import should_alert
 from .reddit import poll_and_alert as reddit_poll_and_alert
 from .scrapers import ALL_SCRAPERS
@@ -131,13 +131,19 @@ def _format_startup_summary(cfg: Config, cycle: list) -> str:
         else:
             for it in items[:6]:
                 section = f" {it.section}" if it.section else ""
+                qty_note = (
+                    f" ×{it.quantity} = ${it.total_price * it.quantity:,.2f}"
+                    if it.quantity > 1
+                    else ""
+                )
                 lines.append(
-                    f"  `{it.site}` ${it.total_price:.2f}{section}"
+                    f"  `{it.site}` ${it.total_price:.2f}/tix{qty_note}{section}"
                 )
         lines.append("")
     lines.append(
         f"Polling every {cfg.poll_seconds.min // 60}–{cfg.poll_seconds.max // 60} min."
     )
+    lines.append(source_tag())
     return "\n".join(lines)
 
 
