@@ -51,13 +51,19 @@ def format_alert(listing: Listing, reason: AlertReason, prior_min: float | None)
         AlertReason.NEW_LOW: "New all-time low",
     }[reason]
     prior = f"prev low ${prior_min:.2f}" if prior_min is not None else "first sighting"
+    qty = listing.quantity
+    group_total_line = ""
+    if qty > 1:
+        group = listing.total_price * qty
+        group_total_line = f"Group total ({qty}× tix): *${group:,.2f}*\n"
     return (
         f"*Movement 2026 — {reason_label}*\n"
         f"{listing.pass_type.display}\n"
         f"Site: `{listing.site}`\n"
-        f"Price: *${listing.total_price:.2f}* "
+        f"Price/ticket: *${listing.total_price:.2f}* "
         f"(${listing.base_price:.2f} + ${listing.fees:.2f} fees)\n"
-        f"Qty: {listing.quantity}"
+        + group_total_line
+        + f"Qty: {qty}"
         + (f"  Sec: {listing.section}" if listing.section else "")
         + f"\n[Open listing]({listing.url})\n"
         f"_{prior}_"
