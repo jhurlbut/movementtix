@@ -11,17 +11,15 @@ poll_seconds:
 # Don't re-alert the same listing within this many hours.
 alert_dedupe_hours: 6
 
-# Browser connector for AXS / Viagogo (anti-bot heavy sites). Three modes:
-#   1. cdp_url: connect to a running Chrome with --remote-debugging-port=9222
-#      → uses YOUR existing logged-in session (most reliable).
-#   2. user_data_dir: launch a persistent Chromium that keeps cookies between
-#      runs. Safer than CDP if you don't want to share your real Chrome.
-#   3. neither set → ephemeral headless Chromium (default; lowest success rate).
+# Browser connector. For GitHub Actions deployment, leave both blank —
+# Playwright launches an ephemeral chromium per run. For local
+# always-on operation, set cdp_url to "http://127.0.0.1:9222" and run
+# ./start_chrome.sh first to use a persistent session.
 browser:
-  cdp_url: "http://127.0.0.1:9222"  # set to "" to disable; run ./start_chrome.sh first
-  user_data_dir: ""     # e.g. "/Users/you/.movementtix-chrome"
-  headless: true        # ignored when cdp_url is set
-  channel: ""           # "chrome" to use installed Chrome, "" for bundled chromium
+  cdp_url: ""           # local: "http://127.0.0.1:9222"; CI: leave blank
+  user_data_dir: ""
+  headless: true
+  channel: ""
 
 # Toggle individual scrapers. Disable any that are broken or noisy.
 sites:

@@ -9,17 +9,59 @@ Sites monitored: Tixel · AXS (primary + resale) · StubHub · Viagogo ·
 Vivid Seats · SeatGeek. **Plus** a r/MovementDEMF feed that pings you on
 *any* new ticket-resale or after-party post.
 
-## Quick start
+## Deployment options
+
+Two equally supported ways to run this:
+
+1. **GitHub Actions** — recommended. Free for public repos, no infra.
+   Each scheduled run is one poll cycle; state persists across runs in
+   the Actions cache. See [GitHub Actions setup](#github-actions-setup).
+
+2. **Local always-on box** — Python loop + persistent Chrome relay.
+   Useful if you already have an always-on machine or want lower
+   latency than the 10-min cron. See [Local always-on](#local-always-on).
+
+## GitHub Actions setup
+
+1. **Push this repo** (or fork it) to GitHub. Public repos get unlimited
+   Actions minutes; private repos have 2,000 free min/month — enough for
+   a 30-min cron but not the default 10-min one.
+2. **Settings → Secrets and variables → Actions → New repository secret**.
+   Add at minimum:
+
+   | Secret | Required | Notes |
+   | --- | --- | --- |
+   | `TELEGRAM_BOT_TOKEN` | yes | From @BotFather |
+   | `TELEGRAM_CHAT_ID`   | yes | DM @userinfobot to find yours |
+   | `SEATGEEK_CLIENT_ID` | optional | Free at <https://seatgeek.com/account/develop> (Movement isn't on SeatGeek but the toggle is there) |
+   | `REDDIT_CLIENT_ID`   | optional | Free script app at <https://www.reddit.com/prefs/apps> |
+   | `REDDIT_CLIENT_SECRET` | optional | Same place |
+   | `REDDIT_USERNAME`    | optional | Your handle (without `u/`), for User-Agent attribution |
+
+3. **Settings → Actions → General**: ensure Actions are enabled.
+4. The workflow `.github/workflows/poll.yml` polls every 10 min on a
+   cron and on manual dispatch. **Trigger one manual run first**
+   (Actions tab → poll → Run workflow → optional dry_run=true) to
+   confirm the secrets work and you get a Telegram message.
+5. Adjust cadence by editing the cron in `poll.yml` if needed.
+
+State (price history + alert dedupe) is restored from a cache key
+`movementtix-state-v1-*` at the start of each run and saved on exit.
+Cache is evicted after 7 days of inactivity — losing it just means
+the next run treats the first listing it sees as a "new low".
+
+## Local always-on
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
-playwright install chromium    # only if you keep AXS/Viagogo enabled
+playwright install chromium    # used by StubHub scraper
 
-cp .env.example .env           # then fill in your creds
-$EDITOR config.yaml            # tweak caps / poll cadence / which sites
+cp .env.example .env           # fill in TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
+$EDITOR config.yaml            # set browser.cdp_url to "http://127.0.0.1:9222"
 
-./start_chrome.sh              # launch persistent chrome on port 9222
+./start_chrome.sh              # persistent chrome on port 9222
+./run.sh                       # nohup the Python daemon
 ```
 
 ### Required env vars (`.env`)

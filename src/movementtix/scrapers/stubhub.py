@@ -41,9 +41,6 @@ class StubHubScraper(Scraper):
         )
 
     def _fetch_listings_dom(self, url: str) -> list[dict]:
-        if not self._use_relay:
-            log.info("stubhub: relay required (set browser.cdp_url)")
-            return []
         with open_page(self.config.browser, stealth=False) as page:
             if page is None:
                 return []
