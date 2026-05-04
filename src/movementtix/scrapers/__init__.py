@@ -1,5 +1,6 @@
 from .axs import AxsScraper
 from .base import Scraper
+from .eventim import EventimScraper
 from .seatgeek import SeatGeekScraper
 from .stubhub import StubHubScraper
 from .tixel import TixelScraper
@@ -8,6 +9,7 @@ from .vividseats import VividSeatsScraper
 
 ALL_SCRAPERS: dict[str, type[Scraper]] = {
     "tixel": TixelScraper,
+    "eventim": EventimScraper,
     "axs": AxsScraper,
     "stubhub": StubHubScraper,
     "viagogo": ViagogoScraper,

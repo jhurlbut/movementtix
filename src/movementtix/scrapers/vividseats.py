@@ -48,13 +48,22 @@ class VividSeatsScraper(Scraper):
         if not tickets:
             return None
 
-        cheapest = min(tickets, key=lambda t: t["price"])
+        # Sort by all-in price when available (true total user pays); fall
+        # back to base + 30% guess for rows missing aip.
+        def total_for(t: dict) -> float:
+            return t.get("all_in_price") or (t["price"] * 1.30)
+        cheapest = min(tickets, key=total_for)
         base = float(cheapest["price"])
+        aip = cheapest.get("all_in_price")
+        if aip is not None and aip > base:
+            fees = float(aip) - base
+        else:
+            fees = estimate_fees(base, self.name)
         return Listing(
             site=self.name,
             pass_type=pass_type,
             base_price=base,
-            fees=estimate_fees(base, self.name),
+            fees=fees,
             quantity=int(cheapest.get("quantity", 1)),
             url=EVENT_URLS.get(pass_type) or f"https://www.vividseats.com/production/{production_id}",
             section=cheapest.get("section"),
@@ -84,9 +93,18 @@ class VividSeatsScraper(Scraper):
             price = t.get("price") or t.get("p")
             if price is None:
                 continue
+            base = float(price)
+            # Vivid's API includes the exact all-in price per ticket in
+            # `aip` / `allInPricePerTicket`. Prefer it over our 30% guess.
+            aip = t.get("allInPricePerTicket") or t.get("aip")
+            try:
+                aip_f = float(aip) if aip is not None else None
+            except (TypeError, ValueError):
+                aip_f = None
             out.append(
                 {
-                    "price": float(price),
+                    "price": base,
+                    "all_in_price": aip_f,
                     "quantity": t.get("quantity") or t.get("q") or 1,
                     "section": t.get("section") or t.get("s"),
                 }

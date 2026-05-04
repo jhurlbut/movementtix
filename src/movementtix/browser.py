@@ -24,9 +24,25 @@ from .config import BrowserConfig
 log = logging.getLogger(__name__)
 
 
+REAL_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/147.0.0.0 Safari/537.36"
+)
+
+
 @contextlib.contextmanager
-def open_page(cfg: BrowserConfig, *, stealth: bool = True) -> Iterator:
+def open_page(cfg: BrowserConfig, *, stealth: bool = True,
+              force_headed: bool = False) -> Iterator:
     """Yield a Playwright `Page` according to the configured mode.
+
+    Args:
+      stealth: apply playwright-stealth tweaks if installed.
+      force_headed: launch the *full* chromium (not headless-shell) with
+        `headless=False` and a realistic user agent. This defeats AWS
+        WAF / similar bot detection on sites like StubHub. Requires an
+        X display — in CI use `xvfb-run` to wrap the python process. If
+        no display is available the launch fails and we yield None so
+        callers degrade cleanly.
 
     On import / launch failure, yields None so callers can degrade.
     """
@@ -58,6 +74,24 @@ def open_page(cfg: BrowserConfig, *, stealth: bool = True) -> Iterator:
             if cfg.channel:
                 kwargs["channel"] = cfg.channel
             context = pw.chromium.launch_persistent_context(cfg.user_data_dir, **kwargs)
+            page = context.new_page()
+        elif force_headed:
+            log.info("browser: full chromium, headed (anti-WAF mode)")
+            browser = pw.chromium.launch(
+                channel="chromium",
+                headless=False,
+                args=[
+                    "--ignore-certificate-errors",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                ],
+            )
+            context = browser.new_context(
+                ignore_https_errors=True,
+                user_agent=REAL_UA,
+                viewport={"width": 1280, "height": 800},
+            )
             page = context.new_page()
         else:
             log.info("browser: ephemeral headless chromium (no profile)")
