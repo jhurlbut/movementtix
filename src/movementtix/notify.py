@@ -30,8 +30,10 @@ def source_tag() -> str:
 
 
 class Telegram:
-    def __init__(self, token: str, chat_id: str):
+    def __init__(self, token: str, chat_id: str = ""):
         self.token = token
+        # chat_id is the legacy single-recipient (kept for --test smoke
+        # checks). The fanout path uses the subscribers table instead.
         self.chat_id = chat_id
         self.base = f"https://api.telegram.org/bot{token}"
 
@@ -41,25 +43,72 @@ class Telegram:
             r.raise_for_status()
             return r.json()
 
-    def send_message(self, text: str) -> None:
-        if not self.token or not self.chat_id:
-            log.warning("telegram creds missing; skipping send: %s", text[:80])
-            return
-        self._post(
-            "sendMessage",
-            {
-                "chat_id": self.chat_id,
-                "text": text,
-                "parse_mode": "Markdown",
-                "disable_web_page_preview": False,
-            },
-        )
-
-    def get_updates(self) -> dict:
+    def api_get(self, method: str, params: dict | None = None) -> dict:
         with httpx.Client(timeout=15) as client:
-            r = client.get(f"{self.base}/getUpdates")
+            r = client.get(f"{self.base}/{method}", params=params or {})
             r.raise_for_status()
             return r.json()
+
+    def send_to(self, chat_id: int | str, text: str) -> bool:
+        """Send a single Markdown message to one chat. Returns True on
+        success, False if the bot can't deliver (blocked, deactivated,
+        or chat not found) so the caller can purge the subscriber."""
+        if not self.token:
+            log.warning("telegram token missing; skipping send")
+            return False
+        try:
+            self._post(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": False,
+                },
+            )
+            return True
+        except httpx.HTTPStatusError as e:
+            body = ""
+            try:
+                body = e.response.text[:300]
+            except Exception:
+                pass
+            # 403 = bot blocked, 400 chat not found, etc. → caller should
+            # deactivate that subscriber rather than retry.
+            if e.response.status_code in (400, 403):
+                log.info("telegram drop chat=%s: %s", chat_id, body)
+                return False
+            log.warning("telegram send to %s failed: %s %s",
+                        chat_id, e.response.status_code, body)
+            return False
+        except httpx.HTTPError as e:
+            log.warning("telegram send to %s network err: %s", chat_id, e)
+            return False
+
+    def fanout(self, text: str, chat_ids: list[int]) -> tuple[int, list[int]]:
+        """Send `text` to every chat_id. Returns (sent_count, dead_ids)
+        where dead_ids are recipients to deactivate."""
+        sent, dead = 0, []
+        for cid in chat_ids:
+            ok = self.send_to(cid, text)
+            if ok:
+                sent += 1
+            else:
+                # Only deactivate on permanent failures we just logged
+                # at INFO level — heuristic: 400/403 give back False.
+                dead.append(cid)
+        return sent, dead
+
+    # Backwards-compat for the legacy single-recipient send (used by
+    # `python -m movementtix.notify --test`).
+    def send_message(self, text: str) -> None:
+        if not self.chat_id:
+            log.warning("legacy chat_id missing; skipping send")
+            return
+        self.send_to(self.chat_id, text)
+
+    def get_updates(self) -> dict:
+        return self.api_get("getUpdates")
 
 
 def format_alert(listing: Listing, reason: AlertReason, prior_min: float | None) -> str:

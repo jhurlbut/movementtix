@@ -191,11 +191,15 @@ def poll_and_alert(cfg: Config, state: State, dry_run: bool, telegram) -> int:
         if dry_run:
             log.info("[dry-run] reddit alert:\n%s", text)
         else:
-            try:
-                telegram.send_message(text)
-            except Exception as e:
-                log.exception("telegram send failed for reddit post %s: %s", post.id, e)
-                continue
+            subs = state.active_subscribers()
+            if subs:
+                sent, dead = telegram.fanout(text, subs)
+                for cid in dead:
+                    state.remove_subscriber(cid)
+                log.info("reddit alert fanout: %d/%d sent (post %s)",
+                         sent, len(subs), post.id)
+            else:
+                log.info("reddit alert: no subscribers (post %s)", post.id)
         state.mark_reddit_seen(post.id)
         alerted += 1
     return alerted

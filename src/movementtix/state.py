@@ -43,7 +43,85 @@ class State:
               post_id TEXT PRIMARY KEY,
               alerted_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS subscribers (
+              chat_id    INTEGER PRIMARY KEY,
+              username   TEXT,
+              first_name TEXT,
+              joined_at  TEXT NOT NULL,
+              active     INTEGER NOT NULL DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS kv (
+              k TEXT PRIMARY KEY,
+              v TEXT NOT NULL
+            );
             """
+        )
+
+    # ------------------------------------------------------------------
+    # Subscribers
+    # ------------------------------------------------------------------
+
+    def add_subscriber(self, chat_id: int, username: str | None,
+                       first_name: str | None) -> bool:
+        """Add or reactivate a subscriber. Returns True if newly added or
+        reactivated, False if they were already active."""
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self._conn.execute(
+            "SELECT active FROM subscribers WHERE chat_id=?", (chat_id,)
+        ).fetchone()
+        if cur is None:
+            self._conn.execute(
+                "INSERT INTO subscribers(chat_id, username, first_name, joined_at, active)"
+                " VALUES (?,?,?,?,1)",
+                (chat_id, username or "", first_name or "", now),
+            )
+            return True
+        if cur[0] == 0:
+            self._conn.execute(
+                "UPDATE subscribers SET active=1, username=?, first_name=? WHERE chat_id=?",
+                (username or "", first_name or "", chat_id),
+            )
+            return True
+        # Already active — refresh metadata silently.
+        self._conn.execute(
+            "UPDATE subscribers SET username=?, first_name=? WHERE chat_id=?",
+            (username or "", first_name or "", chat_id),
+        )
+        return False
+
+    def remove_subscriber(self, chat_id: int) -> bool:
+        cur = self._conn.execute(
+            "UPDATE subscribers SET active=0 WHERE chat_id=? AND active=1", (chat_id,)
+        )
+        return cur.rowcount > 0
+
+    def active_subscribers(self) -> list[int]:
+        return [
+            row[0]
+            for row in self._conn.execute(
+                "SELECT chat_id FROM subscribers WHERE active=1 ORDER BY joined_at"
+            ).fetchall()
+        ]
+
+    def subscriber_count(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM subscribers WHERE active=1"
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    # ------------------------------------------------------------------
+    # Generic key/value (used for the Telegram getUpdates offset)
+    # ------------------------------------------------------------------
+
+    def kv_get(self, key: str) -> str | None:
+        row = self._conn.execute("SELECT v FROM kv WHERE k=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def kv_set(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", (key, value)
         )
 
     def reddit_already_seen(self, post_id: str) -> bool:
