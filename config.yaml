@@ -28,7 +28,7 @@ sites:
   tixel: true
   stubhub: true
   vividseats: true
-  axs: false        # primary vendor — face value never beats resale caps; prices behind JS modal
+  axs: false        # tix.axs.com (their actual shop) blocks headless browsers from datacenter IPs ("Ensuring a fair fan experience" wall). Re-enable only when running the Chrome relay on a residential IP via SSH tunnel from a real desktop.
   viagogo: false    # Movement 2026 not listed on platform (verified)
   seatgeek: false   # Movement 2026 not listed on platform (verified)
 
