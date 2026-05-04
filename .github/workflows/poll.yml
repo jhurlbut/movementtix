@@ -1,0 +1,107 @@
+name: poll
+
+# Each scheduled run does ONE poll cycle (no daemon loop). State is
+# persisted between runs in the Actions cache so "new low" tracking and
+# alert dedupe survive across runs.
+#
+# Cron:
+#   - GitHub Actions cron has a minimum granularity of 5 min and may
+#     drift 5–15 min during peak load. */10 is the sweet spot.
+#   - Public repos: unlimited Actions minutes.
+#   - Private repos: 2,000 free min/month — at ~1 min/run × 6 runs/hr ×
+#     720 hr/month = ~4,320 min, so consider 30-min cron OR making the
+#     repo public.
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+# Optional secrets:
+#   SEATGEEK_CLIENT_ID, REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Skip Telegram sends (smoke test)"
+        type: boolean
+        default: false
+      site:
+        description: "Restrict to one site (tixel|stubhub|vividseats)"
+        type: string
+        default: ""
+
+concurrency:
+  # Queue runs rather than cancel; we never want a poll to be skipped.
+  group: poll
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package
+        run: pip install -e .
+
+      # Cache the bundled Playwright browser between runs (~150 MB).
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-v1-${{ runner.os }}
+
+      - name: Install Playwright Chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: playwright install --with-deps chromium
+
+      - name: Install Chromium system deps (cached path)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: playwright install-deps chromium
+
+      # Restore prior state.db (price history + alert dedupe). On first
+      # run this misses cleanly and the script creates a fresh DB.
+      - name: Restore state.db
+        uses: actions/cache/restore@v4
+        with:
+          path: state.db
+          # Unique save key per run; restore from the most recent prior key.
+          key: movementtix-state-v1-${{ github.run_id }}
+          restore-keys: |
+            movementtix-state-v1-
+
+      - name: Run one poll cycle
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEATGEEK_CLIENT_ID: ${{ secrets.SEATGEEK_CLIENT_ID }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+        run: |
+          ARGS="--once"
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          if [[ -n "${{ inputs.site }}" ]]; then
+            ARGS="$ARGS --site ${{ inputs.site }}"
+          fi
+          python -m movementtix.main $ARGS
+
+      # Always save state — even if a scraper hit a transient error,
+      # the DB may still have new "min seen" rows worth keeping.
+      - name: Save state.db
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state.db
+          key: movementtix-state-v1-${{ github.run_id }}

@@ -1,0 +1,63 @@
+# Per-pass-type alert caps (USD, all-in including fees).
+caps:
+  three_day: 300.0
+  saturday: 150.0
+
+# Polling: pick a uniform random delay in this range between site fetches.
+poll_seconds:
+  min: 300   # 5 min
+  max: 600   # 10 min
+
+# Don't re-alert the same listing within this many hours.
+alert_dedupe_hours: 6
+
+# Browser connector. For GitHub Actions deployment, leave both blank —
+# Playwright launches an ephemeral chromium per run. For local
+# always-on operation, set cdp_url to "http://127.0.0.1:9222" and run
+# ./start_chrome.sh first to use a persistent session.
+browser:
+  cdp_url: ""           # local: "http://127.0.0.1:9222"; CI: leave blank
+  user_data_dir: ""
+  headless: true
+  channel: ""
+
+# Toggle individual scrapers. Disable any that are broken or noisy.
+sites:
+  tixel: true
+  stubhub: true
+  vividseats: true
+  axs: false        # tix.axs.com (their actual shop) blocks headless browsers from datacenter IPs ("Ensuring a fair fan experience" wall). Re-enable only when running the Chrome relay on a residential IP via SSH tunnel from a real desktop.
+  viagogo: false    # Movement 2026 not listed on platform (verified)
+  seatgeek: false   # Movement 2026 not listed on platform (verified)
+
+# Reddit r/MovementDEMF feed: alerts on new posts mentioning ticket
+# resale or after-party tickets. Uses Reddit OAuth (free script app).
+reddit:
+  enabled: true
+  subreddit: MovementDEMF
+  fetch_limit: 50
+  keywords:
+    - selling
+    - sell my
+    - for sale
+    - wts
+    - resale
+    - re-sell
+    - resell
+    - iso
+    - in search of
+    - looking for
+    - wristband
+    - 3-day
+    - 3 day
+    - saturday pass
+    - sunday pass
+    - monday pass
+    - after party
+    - after-party
+    - afterparty
+    - afters
+
+# State + log paths.
+state_db: state.db
+log_file: movementtix.log
