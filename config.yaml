@@ -24,10 +24,11 @@ browser:
 # Toggle individual scrapers. Disable any that are broken or noisy.
 sites:
   tixel: true
+  eventim: true     # primary box-office issuer; face value + service fee
   stubhub: true
   vividseats: true
+  viagogo: true     # sister site to StubHub, often exposes more inventory + cheaper
   axs: false        # tix.axs.com (their actual shop) blocks headless browsers from datacenter IPs ("Ensuring a fair fan experience" wall). Re-enable only when running the Chrome relay on a residential IP via SSH tunnel from a real desktop.
-  viagogo: false    # Movement 2026 not listed on platform (verified)
   seatgeek: false   # Movement 2026 not listed on platform (verified)
 
 # Reddit r/MovementDEMF feed: alerts on new posts mentioning ticket
