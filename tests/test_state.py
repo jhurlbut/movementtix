@@ -17,12 +17,17 @@ def make_listing(site: str, price: float, url: str = "https://example.com",
 
 
 def test_record_and_prior_min(tmp_path):
+    """prior_min returns the price recorded by the *previous* cycle, not
+    an all-time minimum. A $250 listing that sold doesn't keep
+    suppressing alerts forever once the floor rebounds to $280."""
     state = State(tmp_path / "s.db")
     assert state.prior_min("tixel", PassType.THREE_DAY) is None
     state.record(make_listing("tixel", 320))
+    assert state.prior_min("tixel", PassType.THREE_DAY) == 320
     state.record(make_listing("tixel", 250))
-    state.record(make_listing("tixel", 280))
     assert state.prior_min("tixel", PassType.THREE_DAY) == 250
+    state.record(make_listing("tixel", 280))
+    assert state.prior_min("tixel", PassType.THREE_DAY) == 280
     state.close()
 
 

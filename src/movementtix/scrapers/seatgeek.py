@@ -14,6 +14,8 @@ log = logging.getLogger(__name__)
 TITLE_HINTS = {
     PassType.THREE_DAY: ("3-day", "3 day", "three day", "3day"),
     PassType.SATURDAY: ("saturday",),
+    PassType.SUNDAY: ("sunday",),
+    PassType.MONDAY: ("monday",),
 }
 
 

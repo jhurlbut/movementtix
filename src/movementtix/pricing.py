@@ -1,7 +1,30 @@
 from __future__ import annotations
 
+import re
+
 from .config import Caps
-from .models import AlertReason, Listing
+from .models import AlertReason, Listing, Tier
+
+_VIP_RE = re.compile(r"\b(vip|cabana|premium|loft|hospitality)\b", re.I)
+_GA_RE = re.compile(r"\b(ga|general\s*admission|general)\b", re.I)
+
+
+def detect_tier(*texts: str | None) -> Tier:
+    """Classify a listing's tier from any text fields the scraper has
+    (section name, group label, raw category, listing title). Returns
+    Tier.VIP or Tier.GA on a clean keyword match, otherwise UNKNOWN.
+
+    VIP wins ties — many GA listings use "GA + VIP add-on" phrasing
+    where both appear; treating those as VIP is safer (better to
+    over-tag VIP than mis-route a VIP-priced ticket as GA)."""
+    haystack = " ".join(t for t in texts if t)
+    if not haystack:
+        return Tier.UNKNOWN
+    if _VIP_RE.search(haystack):
+        return Tier.VIP
+    if _GA_RE.search(haystack):
+        return Tier.GA
+    return Tier.UNKNOWN
 
 
 def estimate_fees(base_price: float, site: str) -> float:

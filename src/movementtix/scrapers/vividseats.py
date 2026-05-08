@@ -5,7 +5,7 @@ import re
 
 from ..config import EVENT_IDS
 from ..models import Listing, PassType
-from ..pricing import estimate_fees
+from ..pricing import detect_tier, estimate_fees
 from .base import Scraper
 
 log = logging.getLogger(__name__)
@@ -67,6 +67,7 @@ class VividSeatsScraper(Scraper):
             quantity=int(cheapest.get("quantity", 1)),
             url=EVENT_URLS.get(pass_type) or f"https://www.vividseats.com/production/{production_id}",
             section=cheapest.get("section"),
+            tier=detect_tier(cheapest.get("section")),
             raw=cheapest,
         )
 
@@ -83,6 +84,10 @@ class VividSeatsScraper(Scraper):
             if pass_type is PassType.THREE_DAY and ("3 day" in t or "3-day" in t):
                 return pid
             if pass_type is PassType.SATURDAY and "saturday" in t:
+                return pid
+            if pass_type is PassType.SUNDAY and "sunday" in t:
+                return pid
+            if pass_type is PassType.MONDAY and "monday" in t:
                 return pid
         return ""
 

@@ -114,9 +114,9 @@ class Telegram:
 def format_alert(listing: Listing, reason: AlertReason, prior_min: float | None) -> str:
     reason_label = {
         AlertReason.UNDER_CAP: "Under cap",
-        AlertReason.NEW_LOW: "New all-time low",
+        AlertReason.NEW_LOW: "New low — cheapest available across all sites",
     }[reason]
-    prior = f"prev low ${prior_min:.2f}" if prior_min is not None else "first sighting"
+    prior = f"prev cheapest ${prior_min:.2f}" if prior_min is not None else "first sighting"
     qty = listing.quantity
     group_total_line = ""
     if qty > 1:

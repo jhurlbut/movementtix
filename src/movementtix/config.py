@@ -13,9 +13,16 @@ from .models import PassType
 class Caps(BaseModel):
     three_day: float = 300.0
     saturday: float = 150.0
+    sunday: float = 150.0
+    monday: float = 150.0
 
     def for_pass(self, pt: PassType) -> float:
-        return self.three_day if pt is PassType.THREE_DAY else self.saturday
+        return {
+            PassType.THREE_DAY: self.three_day,
+            PassType.SATURDAY: self.saturday,
+            PassType.SUNDAY: self.sunday,
+            PassType.MONDAY: self.monday,
+        }[pt]
 
 
 class PollSeconds(BaseModel):
@@ -112,21 +119,39 @@ EVENT_IDS: dict[str, dict[PassType, str]] = {
     "axs": {
         PassType.THREE_DAY: "1183251",
         PassType.SATURDAY: "1285169",
+        PassType.SUNDAY: "",
+        PassType.MONDAY: "",
     },
     "vividseats": {
         PassType.THREE_DAY: "6136478",
         PassType.SATURDAY: "6482557",
+        PassType.SUNDAY: "",
+        PassType.MONDAY: "",
     },
-    "tixel": {PassType.THREE_DAY: "", PassType.SATURDAY: ""},
+    "tixel": {
+        PassType.THREE_DAY: "",
+        PassType.SATURDAY: "",
+        PassType.SUNDAY: "",
+        PassType.MONDAY: "",
+    },
     "stubhub": {
         PassType.THREE_DAY: "159631798",
         PassType.SATURDAY: "159867649",
+        PassType.SUNDAY: "",
+        PassType.MONDAY: "",
     },
     # Viagogo and StubHub share inventory and use the same numeric event ID.
     "viagogo": {
         PassType.THREE_DAY: "159631798",
         PassType.SATURDAY: "159867649",
+        PassType.SUNDAY: "",
+        PassType.MONDAY: "",
     },
     # SeatGeek scraper resolves IDs at runtime via the events search API.
-    "seatgeek": {PassType.THREE_DAY: "", PassType.SATURDAY: ""},
+    "seatgeek": {
+        PassType.THREE_DAY: "",
+        PassType.SATURDAY: "",
+        PassType.SUNDAY: "",
+        PassType.MONDAY: "",
+    },
 }

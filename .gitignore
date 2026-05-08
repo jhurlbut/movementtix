@@ -5,8 +5,11 @@ state.db-shm
 state.db-wal
 movementtix.log
 movementtix.pid
+listener.log
+listener.pid
 chrome.log
 chrome.pid
+.claude/
 __pycache__/
 *.py[cod]
 .venv/

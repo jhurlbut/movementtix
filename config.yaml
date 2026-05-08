@@ -2,11 +2,13 @@
 caps:
   three_day: 300.0
   saturday: 150.0
+  sunday: 150.0
+  monday: 150.0
 
 # Polling: pick a uniform random delay in this range between site fetches.
 poll_seconds:
-  min: 300   # 5 min
-  max: 600   # 10 min
+  min: 60    # 1 min — local-daemon cadence; bump to 300 for GH Actions
+  max: 120   # 2 min
 
 # Don't re-alert the same listing within this many hours.
 alert_dedupe_hours: 6
@@ -16,7 +18,7 @@ alert_dedupe_hours: 6
 # always-on operation, set cdp_url to "http://127.0.0.1:9222" and run
 # ./start_chrome.sh first to use a persistent session.
 browser:
-  cdp_url: ""           # local: "http://127.0.0.1:9222"; CI: leave blank
+  cdp_url: "http://127.0.0.1:9222"   # local Chrome relay (start_chrome.sh)
   user_data_dir: ""
   headless: true
   channel: ""

@@ -6,6 +6,7 @@ import re
 from ..browser import open_page
 from ..config import EVENT_IDS
 from ..models import Listing, PassType
+from ..pricing import detect_tier
 from .base import Scraper
 
 log = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ class ViagogoScraper(Scraper):
             quantity=int(cheapest.get("quantity", 1)),
             url=url,
             section=cheapest.get("section"),
+            tier=detect_tier(cheapest.get("section"), cheapest.get("raw_text")),
             raw=cheapest,
         )
 

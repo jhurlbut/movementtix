@@ -41,6 +41,7 @@ class AxsScraper(Scraper):
             url=url,
             section=None,
             raw={"event_id": event_id},
+            # AXS inline price hints don't expose tier; left as UNKNOWN.
         )
 
     @classmethod

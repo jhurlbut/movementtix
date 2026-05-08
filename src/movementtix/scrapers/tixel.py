@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from ..models import Listing, PassType
+from ..pricing import detect_tier
 from .base import Scraper
 
 log = logging.getLogger(__name__)
@@ -17,6 +18,8 @@ GROUP_MAP = {
     "3 Day": PassType.THREE_DAY,
     "Weekend": PassType.THREE_DAY,
     "Saturday": PassType.SATURDAY,
+    "Sunday": PassType.SUNDAY,
+    "Monday": PassType.MONDAY,
 }
 
 PAYLOAD_RE = re.compile(
@@ -59,6 +62,7 @@ class TixelScraper(Scraper):
             quantity=int(cheapest.get("quantity", 1)),
             url=EVENT_URL,
             section=cheapest.get("name"),
+            tier=detect_tier(cheapest.get("name"), cheapest.get("group")),
             raw=cheapest,
         )
 

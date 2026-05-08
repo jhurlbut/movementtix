@@ -8,7 +8,8 @@ import logging
 import re
 
 from ..browser import open_page
-from ..models import Listing, PassType
+from ..models import Listing, PassType, Tier
+from ..pricing import detect_tier
 from .base import Scraper
 
 log = logging.getLogger(__name__)
@@ -22,8 +23,10 @@ EVENT_URL = "https://www.eventim.us/event/tickets/655986"
 #   "($189.00face value + $38.45service fee)"
 # The (WAVE N) tier rolls forward as inventory sells through.
 _HEADING_PATTERNS: dict[PassType, re.Pattern] = {
-    PassType.THREE_DAY: re.compile(r"^GA\s+3[\s-]?DAY\b", re.IGNORECASE),
-    PassType.SATURDAY: re.compile(r"^GA\s+SATURDAY\b", re.IGNORECASE),
+    PassType.THREE_DAY: re.compile(r"^(GA|VIP)\s+3[\s-]?DAY\b", re.IGNORECASE),
+    PassType.SATURDAY: re.compile(r"^(GA|VIP)\s+SATURDAY\b", re.IGNORECASE),
+    PassType.SUNDAY: re.compile(r"^(GA|VIP)\s+SUNDAY\b", re.IGNORECASE),
+    PassType.MONDAY: re.compile(r"^(GA|VIP)\s+MONDAY\b", re.IGNORECASE),
 }
 
 _PRICE_LINE = re.compile(r"^\$\s*([\d,]+(?:\.\d{2})?)\s*$")
@@ -55,6 +58,7 @@ class EventimScraper(Scraper):
             quantity=1,
             url=EVENT_URL,
             section=parsed.get("section"),
+            tier=detect_tier(parsed.get("section")),
             raw=parsed,
         )
 
