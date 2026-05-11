@@ -243,6 +243,56 @@ class State:
     def set_global_min(self, pass_type: PassType, price: float) -> None:
         self.kv_set(self._global_min_key(pass_type), f"{price:.2f}")
 
+    # ------------------------------------------------------------------
+    # Latest known snapshot per site (the basis for cross-platform
+    # "cheapest currently available"). Includes this cycle's freshly
+    # recorded rows; falls back to past observations for sites that
+    # missed this cycle. A max_age cutoff drops sites that have been
+    # silent long enough that their last price is probably stale (e.g.
+    # the listing sold or the site is offline).
+    # ------------------------------------------------------------------
+
+    def latest_per_site(
+        self,
+        pass_type: PassType,
+        max_age_seconds: int | None = 1800,
+    ) -> list[dict]:
+        """One dict per site that has a row for this pass_type. Each
+        dict carries the full row from the latest observation. Sites
+        whose last row is older than `max_age_seconds` are excluded
+        (set to None to disable the cutoff)."""
+        rows = self._conn.execute(
+            "SELECT site, base_price, fees, total_price, quantity,"
+            " url, section, tier, MAX(fetched_at) as fetched_at"
+            " FROM listings WHERE pass_type=? GROUP BY site",
+            (pass_type.value,),
+        ).fetchall()
+        if not rows:
+            return []
+        cutoff = None
+        if max_age_seconds is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
+        out: list[dict] = []
+        for site, base, fees, total, qty, url, section, tier, ts in rows:
+            if cutoff is not None:
+                try:
+                    if datetime.fromisoformat(ts) < cutoff:
+                        continue
+                except ValueError:
+                    continue
+            out.append({
+                "site": site,
+                "base_price": float(base),
+                "fees": float(fees),
+                "total_price": float(total),
+                "quantity": int(qty),
+                "url": url,
+                "section": section,
+                "tier": tier or "unknown",
+                "fetched_at": ts,
+            })
+        return out
+
     def reddit_already_seen(self, post_id: str) -> bool:
         row = self._conn.execute(
             "SELECT 1 FROM reddit_seen WHERE post_id=?", (post_id,)

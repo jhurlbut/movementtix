@@ -38,6 +38,16 @@ def _resolve(P: list, x: Any) -> Any:
 class TixelScraper(Scraper):
     name = "tixel"
 
+    # Tixel embeds the full React state in the initial server-rendered
+    # HTML, so we don't need a browser. Plain httpx also returns a more
+    # complete listing pool: empirically the Chrome relay's session
+    # (UA / cookies / fingerprint) gets served a thinned-out subset —
+    # routine cycles only saw $390+ rows when sub-$340 listings were
+    # actually live. Force the HTTP path so we see everything.
+    @property
+    def _use_relay(self) -> bool:
+        return False
+
     def fetch_lowest(self, pass_type: PassType) -> Listing | None:
         html = self._fetch_html(EVENT_URL, wait_ms=1500)
         if not html:

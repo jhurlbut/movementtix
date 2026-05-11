@@ -125,15 +125,34 @@ def run_once(cfg: Config, dry_run: bool, only_site: str | None,
             )
 
     # Phase 2: cross-platform alert decision. For each pass_type, find
-    # the cheapest listing across every site this cycle and compare
-    # against the global cheapest from the previous cycle. A site
-    # whose own price dropped but is still pricier than another site
-    # will NOT fire — only the global cheapest does.
+    # the cheapest currently-available listing using each SITE's
+    # most-recent observation (not strictly this cycle's collection).
+    # If Eventim missed this cycle, we fall back to Eventim's last
+    # known price — no spurious "drop" alert on recovery. Sites whose
+    # last observation is older than the cutoff in state.latest_per_site
+    # are excluded as truly offline / sold.
+    from .models import Tier  # local import: avoid circular
     for pt in pass_types:
-        pt_listings = [l for l in cycle if l.pass_type is pt]
-        if not pt_listings:
+        snapshots = state.latest_per_site(pt)
+        if not snapshots:
             continue
-        cheapest = min(pt_listings, key=lambda x: x.total_price)
+        row = min(snapshots, key=lambda r: r["total_price"])
+        from datetime import datetime as _dt
+        try:
+            fa = _dt.fromisoformat(row["fetched_at"])
+        except ValueError:
+            fa = None
+        cheapest = Listing(
+            site=row["site"],
+            pass_type=pt,
+            base_price=row["base_price"],
+            fees=row["fees"],
+            quantity=row["quantity"],
+            url=row["url"],
+            section=row["section"],
+            tier=Tier(row["tier"]) if row["tier"] in (t.value for t in Tier) else Tier.UNKNOWN,
+            fetched_at=fa or _dt.utcnow(),
+        )
         prior_global = state.prior_global_min(pt)
         log.info(
             "  cycle min %s: $%.2f via %s (prev global %s)",
