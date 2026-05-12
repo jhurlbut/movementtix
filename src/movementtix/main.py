@@ -7,7 +7,7 @@ import signal
 import sys
 import time
 from .config import Config
-from .models import PassType
+from .models import Listing, PassType, Tier
 from .notify import Telegram, format_alert, source_tag
 from .pricing import should_alert
 from .reddit import poll_and_alert as reddit_poll_and_alert
@@ -131,7 +131,6 @@ def run_once(cfg: Config, dry_run: bool, only_site: str | None,
     # known price — no spurious "drop" alert on recovery. Sites whose
     # last observation is older than the cutoff in state.latest_per_site
     # are excluded as truly offline / sold.
-    from .models import Tier  # local import: avoid circular
     for pt in pass_types:
         snapshots = state.latest_per_site(pt)
         if not snapshots:
