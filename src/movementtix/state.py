@@ -29,6 +29,16 @@ class State:
             self._conn.execute(
                 "ALTER TABLE listings ADD COLUMN tier TEXT NOT NULL DEFAULT 'unknown'"
             )
+        sub_cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(subscribers)").fetchall()
+        }
+        # Default 1 preserves the prior behavior (every subscriber got
+        # Reddit alerts) for rows that predate this column.
+        if "reddit_alerts" not in sub_cols:
+            self._conn.execute(
+                "ALTER TABLE subscribers ADD COLUMN reddit_alerts INTEGER NOT NULL DEFAULT 1"
+            )
 
     def _init_schema(self) -> None:
         self._conn.executescript(
@@ -61,11 +71,12 @@ class State:
             );
 
             CREATE TABLE IF NOT EXISTS subscribers (
-              chat_id    INTEGER PRIMARY KEY,
-              username   TEXT,
-              first_name TEXT,
-              joined_at  TEXT NOT NULL,
-              active     INTEGER NOT NULL DEFAULT 1
+              chat_id       INTEGER PRIMARY KEY,
+              username      TEXT,
+              first_name    TEXT,
+              joined_at     TEXT NOT NULL,
+              active        INTEGER NOT NULL DEFAULT 1,
+              reddit_alerts INTEGER NOT NULL DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS kv (
@@ -137,6 +148,41 @@ class State:
             "SELECT COUNT(*) FROM subscribers WHERE active=1"
         ).fetchone()
         return int(row[0]) if row else 0
+
+    # ------------------------------------------------------------------
+    # Reddit-alert opt-in. A separate toggle from the ticket watchlist:
+    # a subscriber can want price alerts but not the r/MovementDEMF feed
+    # (or vice versa). Defaults on for every subscriber.
+    # ------------------------------------------------------------------
+
+    def set_reddit_alerts(self, chat_id: int, enabled: bool) -> bool:
+        """Flip a subscriber's Reddit-alert preference. Returns True if the
+        value actually changed, False if it was already in that state (or
+        the chat isn't an active subscriber)."""
+        cur = self._conn.execute(
+            "UPDATE subscribers SET reddit_alerts=? WHERE chat_id=? AND active=1"
+            " AND reddit_alerts!=?",
+            (1 if enabled else 0, chat_id, 1 if enabled else 0),
+        )
+        return cur.rowcount > 0
+
+    def get_reddit_alerts(self, chat_id: int) -> bool | None:
+        """True/False for an active subscriber's preference, or None if the
+        chat isn't an active subscriber."""
+        row = self._conn.execute(
+            "SELECT reddit_alerts FROM subscribers WHERE chat_id=? AND active=1",
+            (chat_id,),
+        ).fetchone()
+        return bool(row[0]) if row else None
+
+    def reddit_subscribers(self) -> list[int]:
+        return [
+            row[0]
+            for row in self._conn.execute(
+                "SELECT chat_id FROM subscribers WHERE active=1 AND reddit_alerts=1"
+                " ORDER BY joined_at"
+            ).fetchall()
+        ]
 
     # ------------------------------------------------------------------
     # Watchlist: which (pass_type, tier) combos each subscriber wants

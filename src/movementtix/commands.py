@@ -38,7 +38,11 @@ WELCOME = (
     "By default you watch every combo until you /unwatch any.\n\n"
     "*Prices*\n"
     "/status — current cheapest known prices\n"
-    "/poll — trigger an immediate scrape and DM the result"
+    "/poll — trigger an immediate scrape and DM the result\n\n"
+    "*Reddit feed*\n"
+    "/reddit — show whether r/MovementDEMF alerts are on\n"
+    "/reddit `on` — get resale/after-party post alerts (on by default)\n"
+    "/reddit `off` — stop Reddit post alerts (price alerts unaffected)"
 )
 
 ALREADY = "You're already subscribed. /stop to leave, /status for current prices."
@@ -49,8 +53,15 @@ NOT_SUBBED = "You weren't subscribed. /start to subscribe."
 
 UNKNOWN = (
     "Commands I understand: /start, /stop, /help, /status, /poll, "
-    "/watch, /unwatch, /watching."
+    "/watch, /unwatch, /watching, /reddit."
 )
+
+REDDIT_USAGE = (
+    "Usage: `/reddit on` or `/reddit off`.\n"
+    "Controls whether you get r/MovementDEMF resale & after-party post "
+    "alerts. Your ticket price alerts are unaffected."
+)
+REDDIT_NOT_SUBBED = "You're not subscribed. /start first, then /reddit on/off."
 
 POLL_ACK = (
     "🔄 *Manual poll requested.*\n"
@@ -170,8 +181,42 @@ def _dispatch(tg: Telegram, state: State, chat_id: int, text: str,
         tg.send_to(chat_id, _handle_watch(state, chat_id, args, add=True))
     elif cmd == "/unwatch":
         tg.send_to(chat_id, _handle_watch(state, chat_id, args, add=False))
+    elif cmd == "/reddit":
+        tg.send_to(chat_id, _handle_reddit(state, chat_id, args))
     else:
         tg.send_to(chat_id, UNKNOWN)
+
+
+def _handle_reddit(state: State, chat_id: int, args: list[str]) -> str:
+    current = state.get_reddit_alerts(chat_id)
+    if current is None:
+        return REDDIT_NOT_SUBBED
+    if not args:
+        state_word = "*on*" if current else "*off*"
+        return (
+            f"r/MovementDEMF post alerts are {state_word}.\n"
+            "Use `/reddit on` or `/reddit off` to change."
+        )
+    choice = args[0].lower()
+    if choice in ("on", "enable", "start", "subscribe"):
+        want = True
+    elif choice in ("off", "disable", "stop", "unsubscribe"):
+        want = False
+    else:
+        return REDDIT_USAGE
+    changed = state.set_reddit_alerts(chat_id, want)
+    log.info("reddit pref: chat=%s -> %s (changed=%s)", chat_id, want, changed)
+    if want:
+        return (
+            "✓ Reddit alerts *on* — I'll DM you new r/MovementDEMF resale "
+            "& after-party posts."
+            if changed else "Reddit alerts were already *on*."
+        )
+    return (
+        "✓ Reddit alerts *off*. You'll still get ticket price alerts. "
+        "`/reddit on` to re-enable."
+        if changed else "Reddit alerts were already *off*."
+    )
 
 
 def _handle_watch(state: State, chat_id: int, args: list[str], add: bool) -> str:

@@ -76,15 +76,22 @@ class RedditClient:
 
     def fetch_new(self, subreddit: str, limit: int = 50) -> list[RedditPost]:
         token = self._get_token()
-        if not token:
-            return []
+        if token:
+            url = f"https://oauth.reddit.com/r/{subreddit}/new"
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "User-Agent": self.user_agent,
+            }
+        else:
+            # Unauthenticated fallback. Public JSON endpoint returns the
+            # same shape; rate limit drops from ~60 req/min to ~10 req/min
+            # but we poll once per cycle so this is plenty.
+            url = f"https://www.reddit.com/r/{subreddit}/new.json"
+            headers = {"User-Agent": self.user_agent}
         try:
             r = httpx.get(
-                f"https://oauth.reddit.com/r/{subreddit}/new",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "User-Agent": self.user_agent,
-                },
+                url,
+                headers=headers,
                 params={"limit": limit, "raw_json": 1},
                 timeout=15,
             )
@@ -165,9 +172,6 @@ def poll_and_alert(cfg: Config, state: State, dry_run: bool, telegram) -> int:
     """
     if not cfg.reddit.enabled:
         return 0
-    if not (cfg.reddit_client_id and cfg.reddit_client_secret):
-        log.info("reddit: REDDIT_CLIENT_ID/SECRET not set; skipping")
-        return 0
 
     client = RedditClient(
         cfg.reddit_client_id, cfg.reddit_client_secret, cfg.reddit_username
@@ -191,7 +195,7 @@ def poll_and_alert(cfg: Config, state: State, dry_run: bool, telegram) -> int:
         if dry_run:
             log.info("[dry-run] reddit alert:\n%s", text)
         else:
-            subs = state.active_subscribers()
+            subs = state.reddit_subscribers()
             if subs:
                 sent, dead = telegram.fanout(text, subs)
                 for cid in dead:
