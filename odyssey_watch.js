@@ -129,18 +129,41 @@ function findPairs(seats) {
 
 async function fetchHtml(ctx, url, needle) {
   const page = await ctx.newPage();
+  let status = 0, endedInQueue = false;
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    status = resp ? resp.status() : 0;
     for (let i = 0; i < 40; i++) {
       const u = page.url();
       if (!/queue|waitingroom/i.test(u) && (u.includes('/showtimes') || u.includes('/seats'))) break;
       await page.waitForTimeout(3000);
     }
+    endedInQueue = /queue|waitingroom/i.test(page.url());
     await page.waitForTimeout(2500);
     let html = await page.content();
     if (needle && !html.includes(needle)) { await page.waitForTimeout(4000); html = await page.content(); }
-    return html;
+    return { html, status, endedInQueue };
   } finally { await page.close().catch(() => {}); }
+}
+
+// Canary: hit the live showtimes page (redirects to "today", always packed with
+// on-sale shows). If it does not come back with a healthy, parseable set of
+// showtimes, the scraper is blocked or AMC's markup changed — i.e. broken, and
+// a "NONE" result can no longer be trusted.
+async function healthCheck(ctx) {
+  const url = `https://www.amctheatres.com/movie-theatres/${THEATER_PATH}/showtimes`;
+  let c;
+  try { c = await fetchHtml(ctx, url); }
+  catch (e) { return { ok: false, reason: `canary fetch failed: ${e.message}`, canaryShowtimes: 0 }; }
+  const blob = rscBlob(c.html);
+  const shows = parseShowtimes(blob).length;
+  const hasMovies = /\/movies\/[a-z0-9-]+-\d+/.test(blob);
+  const info = { canaryStatus: c.status, canaryBlobBytes: blob.length, canaryShowtimes: shows, canaryHasMovies: hasMovies };
+  if (c.endedInQueue) return { ok: false, reason: 'stuck in the Queue-it waiting room (never cleared)', ...info };
+  if (c.status && c.status >= 400) return { ok: false, reason: `canary page returned HTTP ${c.status}`, ...info };
+  if (blob.length < 5000 || !hasMovies) return { ok: false, reason: `canary returned no usable page data (blob ${blob.length} bytes, movies present: ${hasMovies}) — likely blocked/WAF`, ...info };
+  if (shows === 0) return { ok: false, reason: 'canary page loaded but parsed 0 showtimes for any movie — AMC markup may have changed (parser broken)', ...info };
+  return { ok: true, reason: '', ...info };
 }
 
 async function mapLimit(items, limit, fn) {
@@ -158,11 +181,14 @@ async function mapLimit(items, limit, fn) {
   const browser = await chromium.launch(LAUNCH);
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true, userAgent: UA, viewport: { width: 1200, height: 1400 }, locale: 'en-US', timezoneId: 'America/Los_Angeles' });
   try {
+    // Phase 0: health / block detection via a known-busy canary page
+    result.health = await healthCheck(ctx);
+
     // Phase 1: showtimes per date (concurrency 3)
     const perDate = await mapLimit(dates, 3, async (date) => {
       try {
         const url = `https://www.amctheatres.com/movie-theatres/${THEATER_PATH}/showtimes/all/${date}/${THEATER}/all`;
-        const html = await fetchHtml(ctx, url);
+        const { html } = await fetchHtml(ctx, url);
         const blob = rscBlob(html);
         const shows = parseShowtimes(blob).filter(s => s.aria.includes(MOVIE) && s.aria.includes(FORMAT));
         const night = shows.filter(isNight);
@@ -177,7 +203,7 @@ async function mapLimit(items, limit, fn) {
     result.seatChecks = toCheck.length;
     await mapLimit(toCheck, 3, async (s) => {
       try {
-        const html = await fetchHtml(ctx, `https://www.amctheatres.com/showtimes/${s.id}/seats`, 'seatingLayout');
+        const { html } = await fetchHtml(ctx, `https://www.amctheatres.com/showtimes/${s.id}/seats`, 'seatingLayout');
         const seats = parseSeatLayout(rscBlob(html));
         if (!seats) { result.errors.push(`no layout ${s.date} ${s.time}`); return; }
         const pairs = findPairs(seats);
@@ -191,6 +217,13 @@ async function mapLimit(items, limit, fn) {
   console.log('<RESULT>' + JSON.stringify(result) + '</RESULT>');
   console.log('\n=== Odyssey IMAX 70mm — non-front-row pairs watch ===');
   console.log('Checked at:', result.checkedAtUtc, '| dates:', dates.join(', '));
+  const h = result.health || { ok: false, reason: 'health check did not run' };
+  if (!h.ok) {
+    console.log(`HEALTH: BROKEN — ${h.reason}`);
+    console.log('RESULT: UNKNOWN — the watcher is blocked or broken, so "no seats" cannot be trusted. This needs attention.');
+    return;
+  }
+  console.log(`HEALTH: OK (canary showtimes: ${h.canaryShowtimes})`);
   if (result.finds.length === 0) {
     const anyShows = result.dates.some(d => d.total > 0);
     console.log(anyShows
