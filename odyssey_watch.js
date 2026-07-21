@@ -2,8 +2,8 @@
 /*
  * odyssey_watch.js
  * Checks AMC Metreon 16 for "The Odyssey" in IMAX 70mm and reports NIGHT shows
- * (>= 5:00pm) that have two AVAILABLE seats together which are NOT in the front
- * row (row A) and not wheelchair/companion seats.
+ * (>= 5:00pm) that have two AVAILABLE seats together in row C or deeper (i.e. not
+ * the front two rows; configurable via WATCH_MIN_ROW) and not wheelchair/companion.
  *
  * Target days: Saturday, Sunday, Monday, Wednesday, on/after a configurable
  * start date (default 2026-09-03, since the requester is unavailable through
@@ -26,6 +26,7 @@ const FORMAT = 'imax70mm';
 const START_DATE = process.env.WATCH_START || '2026-09-03'; // inclusive
 const TARGET_DOW = new Set([0, 1, 3, 6]); // Sun=0, Mon=1, Wed=3, Sat=6
 const NIGHT_MIN_HOUR = 17; // 5:00pm local and later
+const MIN_ROW = (process.env.WATCH_MIN_ROW || 'C').toUpperCase(); // exclude rows nearer the screen than this (A=front)
 const MAX_DATES = parseInt(process.env.WATCH_MAX_DATES || '6', 10);
 const PROXY = process.env.HTTPS_PROXY || 'http://127.0.0.1:44409';
 
@@ -99,7 +100,7 @@ function parseSeatLayout(blob) {
   try { return JSON.parse(blob.slice(start, end)); } catch (e) { return null; }
 }
 
-// Find adjacent available, non-front-row, regular-seat pairs; return best few by centrality.
+// Find adjacent available regular-seat pairs in row MIN_ROW or deeper; best few by centrality.
 function findPairs(seats) {
   const disp = seats.filter(s => s.shouldDisplay);
   const byRow = {};
@@ -109,7 +110,7 @@ function findPairs(seats) {
   }
   const pairs = [];
   for (const [letter, rs] of Object.entries(byRow)) {
-    if (letter === 'A') continue; // exclude front row
+    if (letter.length > 1 || letter < MIN_ROW) continue; // exclude rows nearer the screen than MIN_ROW (A=front)
     rs.sort((a, b) => a.column - b.column);
     const nums = rs.map(s => parseInt(s.name.slice(letter.length), 10)).filter(n => !isNaN(n));
     const center = (Math.min(...nums) + Math.max(...nums)) / 2;
