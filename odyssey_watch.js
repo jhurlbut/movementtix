@@ -5,9 +5,9 @@
  * (>= 5:00pm) that have two AVAILABLE seats together in row C or deeper (i.e. not
  * the front two rows; configurable via WATCH_MIN_ROW) and not wheelchair/companion.
  *
- * Target days: Saturday, Sunday, Monday, Wednesday, on/after a configurable
- * start date (default 2026-09-03, since the requester is unavailable through
- * Sep 2). Scans the next N qualifying dates.
+ * Target days: every day of the week by default (override with WATCH_DOW),
+ * on/after a configurable start date (default 2026-09-03, since the requester is
+ * unavailable through Sep 2). Scans the next N qualifying dates.
  *
  * Runs headless Chromium through the session egress proxy. AMC sits behind a
  * Queue-it waiting room + Cloudflare WAF that 403s the JS bundles, but the page
@@ -24,7 +24,8 @@ const THEATER_PATH = 'san-francisco/amc-metreon-16';
 const MOVIE = 'the-odyssey';
 const FORMAT = 'imax70mm';
 const START_DATE = process.env.WATCH_START || '2026-09-03'; // inclusive
-const TARGET_DOW = new Set([0, 1, 3, 6]); // Sun=0, Mon=1, Wed=3, Sat=6
+// Days of week to scan (Sun=0 .. Sat=6). Default: all 7 days. Override with WATCH_DOW="0,1,3,6".
+const TARGET_DOW = new Set((process.env.WATCH_DOW || '0,1,2,3,4,5,6').split(',').map(n => parseInt(n.trim(), 10)));
 const NIGHT_MIN_HOUR = 17; // 5:00pm local and later
 const MIN_ROW = (process.env.WATCH_MIN_ROW || 'C').toUpperCase(); // exclude rows nearer the screen than this (A=front)
 const MAX_DATES = parseInt(process.env.WATCH_MAX_DATES || '6', 10);
