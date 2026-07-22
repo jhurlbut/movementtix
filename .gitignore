@@ -9,6 +9,8 @@ listener.log
 listener.pid
 chrome.log
 chrome.pid
+odyssey.log
+odyssey.pid
 .claude/
 __pycache__/
 *.py[cod]
