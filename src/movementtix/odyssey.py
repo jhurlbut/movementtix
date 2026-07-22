@@ -49,6 +49,7 @@ THEATER_PATH = "san-francisco/amc-metreon-16"
 MOVIE = "the-odyssey"
 FORMAT = "imax70mm"
 NIGHT_MIN_HOUR = 17  # 5:00pm local and later
+NIGHT_MAX_HOUR = int(os.getenv("WATCH_MAX_HOUR", "22"))  # exclusive: before 10:00pm
 BOOK_URL = "https://www.amctheatres.com/showtimes/{id}/seats"
 
 # Tunables (env overrides keep parity with the JS version)
@@ -146,7 +147,7 @@ def is_night(s: dict) -> bool:
     h = s["hour12"] % 12
     if s["am_pm"] == "pm":
         h += 12
-    return h >= NIGHT_MIN_HOUR
+    return NIGHT_MIN_HOUR <= h < NIGHT_MAX_HOUR
 
 
 def parse_seat_layout(blob: str) -> list[dict] | None:
@@ -174,8 +175,11 @@ def parse_seat_layout(blob: str) -> list[dict] | None:
 
 
 def find_pairs(seats: list[dict]) -> list[dict]:
-    """Adjacent available regular-seat pairs in row MIN_ROW or deeper,
-    sorted best-first by centrality."""
+    """Adjacent available regular-seat pairs in the back two-thirds of the
+    house (and never nearer the screen than MIN_ROW), sorted best-first by
+    centrality. The back-2/3 cutoff is computed per seat map from the rows
+    actually present: letters run A (front, nearest screen) upward at both
+    venues, so the last round(2n/3) letters qualify."""
     by_row: dict[str, list[dict]] = {}
     for s in seats:
         if not s.get("shouldDisplay"):
@@ -184,9 +188,12 @@ def find_pairs(seats: list[dict]) -> list[dict]:
         letter = m.group(1) if m else "?"
         by_row.setdefault(letter, []).append(s)
 
+    house_rows = sorted(k for k in by_row if len(k) == 1 and k.isalpha())
+    keep = set(house_rows[-round(len(house_rows) * 2 / 3):]) if house_rows else set()
+
     pairs = []
     for letter, rs in by_row.items():
-        if len(letter) > 1 or letter < MIN_ROW:  # exclude rows nearer the screen (A=front)
+        if letter not in keep or letter < MIN_ROW:
             continue
         rs.sort(key=lambda s: s["column"])
         nums = []
@@ -529,7 +536,7 @@ async def regal_scan() -> dict:
                         if "IMAX 70mm" not in p.get("PerformanceAttributes", []):
                             continue
                         local = p["CalendarShowTime"]
-                        if int(local[11:13]) < NIGHT_MIN_HOUR:
+                        if not NIGHT_MIN_HOUR <= int(local[11:13]) < NIGHT_MAX_HOUR:
                             continue
                         out["shows"].append(
                             {"date": day, "time": _fmt_ampm(local), "mdY": mdY,
@@ -633,7 +640,7 @@ def format_find(f: dict) -> str:
     return (
         f"*The Odyssey — IMAX 70mm pairs @ {f.get('venue', AMC_VENUE)}*\n"
         f"{f['date']} {f['time']}  [{f['status']}]\n"
-        f"{f['pairCount']} pair(s) row {MIN_ROW}+; best: {best}\n"
+        f"{f['pairCount']} pair(s) in the back 2/3; best: {best}\n"
         f"[Book seats]({f.get('url', BOOK_URL.format(id=f['id']))})\n"
         f"{source_tag()}"
     )
