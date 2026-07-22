@@ -471,8 +471,13 @@ def cli() -> None:
         time.sleep(next_delay(result, args.loop))
 
 
+# Minutes before each showtime to force a precisely-timed scan. 60 = an hour
+# out; 30 = AMC's refund cutoff, when the last cancellations land.
+PRESHOW_SWEEPS_MIN = (60, 30)
+
+
 def next_delay(result: dict | None, loop_seconds: int) -> float:
-    """Regular cadence, shortened so a scan fires ~1 hour before each
+    """Regular cadence, shortened so scans fire at T-60 and T-30 before each
     upcoming showtime (the last-minute-cancellation window)."""
     delay = float(loop_seconds)
     if not result:
@@ -481,14 +486,15 @@ def next_delay(result: dict | None, loop_seconds: int) -> float:
     for d in result.get("dates", []):
         for s in d.get("night", []):
             try:
-                pre = parse_show_utc(s["utc"]) - timedelta(hours=1)
+                start = parse_show_utc(s["utc"])
             except (ValueError, KeyError):
                 continue
-            wait = (pre - now).total_seconds()
-            if 0 < wait < delay:
-                delay = max(wait, 60.0)
-                log.info("odyssey: next scan in %.0fs — T-60min before %s %s",
-                         delay, d["date"], s["time"])
+            for mins in PRESHOW_SWEEPS_MIN:
+                wait = (start - timedelta(minutes=mins) - now).total_seconds()
+                if 0 < wait < delay:
+                    delay = max(wait, 60.0)
+                    log.info("odyssey: next scan in %.0fs — T-%dmin before %s %s",
+                             delay, mins, d["date"], s["time"])
     return delay
 
 
