@@ -51,7 +51,8 @@ BOOK_URL = "https://www.amctheatres.com/showtimes/{id}/seats"
 START_DATE = os.getenv("WATCH_START", "2000-01-01")  # inclusive floor; default = no floor
 TARGET_DOW = {int(n) for n in os.getenv("WATCH_DOW", "0,1,2,3,4,5,6").split(",")}  # Sun=0..Sat=6
 MIN_ROW = os.getenv("WATCH_MIN_ROW", "C").upper()  # exclude rows nearer the screen than this
-MAX_DATES = int(os.getenv("WATCH_MAX_DATES", "6"))
+MAX_DATES = int(os.getenv("WATCH_MAX_DATES", "60"))  # hard cap on dates probed per scan
+EMPTY_STOP = int(os.getenv("WATCH_EMPTY_STOP", "3"))  # stop after this many consecutive no-show dates
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36")
@@ -60,19 +61,20 @@ KV_ALERTED = "odyssey_alerted"   # {showtime_id: {"sig": ..., "date": ...}}
 KV_HEALTH = "odyssey_health"     # "ok" | "broken"
 
 
-def target_dates() -> list[str]:
-    """Next MAX_DATES qualifying dates on/after max(tomorrow, START_DATE)."""
+def gen_dates():
+    """Qualifying dates from max(today, START_DATE) onward, unbounded.
+    Today is included so last-minute cancellations before tonight's shows
+    are caught; already-started shows are filtered out at seat-check time.
+    The scan probes these until EMPTY_STOP consecutive dates have no shows
+    (i.e. past AMC's booking horizon), so newly added dates are picked up
+    automatically on later scans."""
     floor = date.fromisoformat(START_DATE)
-    cur = max(date.today() + timedelta(days=1), floor)
-    out: list[str] = []
-    for _ in range(120):
-        if len(out) >= MAX_DATES:
-            break
+    cur = max(date.today(), floor)
+    while True:
         # Python: Mon=0..Sun=6; config uses Sun=0..Sat=6
         if (cur.weekday() + 1) % 7 in TARGET_DOW:
-            out.append(cur.isoformat())
+            yield cur.isoformat()
         cur += timedelta(days=1)
-    return out
 
 
 def rsc_blob(html: str) -> str:
@@ -107,6 +109,13 @@ def parse_showtimes(blob: str) -> list[dict]:
             "aria": m.group(6),
         })
     return out
+
+
+def parse_show_utc(u: str) -> datetime:
+    dt = datetime.fromisoformat(u.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def is_night(s: dict) -> bool:
@@ -237,8 +246,6 @@ async def scan() -> dict:
     """One full scan. Returns the same result shape as the JS version."""
     result: dict = {"checkedAtUtc": datetime.now(timezone.utc).isoformat(),
                     "start": START_DATE, "dates": [], "finds": [], "errors": []}
-    dates = target_dates()
-    result["datesChecked"] = dates
     sem = asyncio.Semaphore(3)
 
     async with async_playwright() as pw:
@@ -260,18 +267,46 @@ async def scan() -> dict:
                         blob = rsc_blob(r["html"])
                         shows = [s for s in parse_showtimes(blob)
                                  if MOVIE in s["aria"] and FORMAT in s["aria"]]
-                        night = [{"id": s["id"], "time": s["time"], "status": s["status"]}
+                        night = [{"id": s["id"], "time": s["time"], "status": s["status"],
+                                  "utc": s["utc"]}
                                  for s in shows if is_night(s)]
                         return {"date": d, "total": len(shows), "night": night}
                     except Exception as e:  # noqa: BLE001
                         result["errors"].append(f"showtimes {d}: {e}")
                         return {"date": d, "total": 0, "night": [], "error": True}
 
-            result["dates"] = list(await asyncio.gather(*(one_date(d) for d in dates)))
+            # Probe forward in batches until EMPTY_STOP consecutive dates come
+            # back with no shows (past the booking horizon) or MAX_DATES is hit.
+            date_iter = gen_dates()
+            per_date: list[dict] = []
+            empty_streak = 0
+            while empty_streak < EMPTY_STOP and len(per_date) < MAX_DATES:
+                batch = [next(date_iter)
+                         for _ in range(min(6, MAX_DATES - len(per_date)))]
+                for r in await asyncio.gather(*(one_date(d) for d in batch)):
+                    per_date.append(r)
+                    if r.get("error"):
+                        continue  # transient failure: don't let it end the probe
+                    empty_streak = 0 if r["total"] > 0 else empty_streak + 1
+                    if empty_streak >= EMPTY_STOP:
+                        break
+            # drop trailing horizon-probe dates that had nothing
+            while per_date and not per_date[-1].get("error") and per_date[-1]["total"] == 0:
+                per_date.pop()
+            result["dates"] = per_date
+            result["datesChecked"] = [d["date"] for d in per_date]
+
+            now = datetime.now(timezone.utc)
+
+            def upcoming(s: dict) -> bool:
+                try:
+                    return parse_show_utc(s["utc"]) > now
+                except ValueError:
+                    return True
 
             to_check = [{"date": d["date"], **s}
                         for d in result["dates"] for s in d["night"]
-                        if not re.search(r"sold\s*out", s["status"], re.I)]
+                        if not re.search(r"sold\s*out", s["status"], re.I) and upcoming(s)]
             result["seatChecks"] = len(to_check)
 
             async def one_seatmap(s: dict) -> None:
@@ -347,12 +382,27 @@ def alert(result: dict, cfg: Config, state: State) -> int:
     alerted: dict = json.loads(state.kv_get(KV_ALERTED) or "{}")
     today = date.today().isoformat()
     alerted = {k: v for k, v in alerted.items() if v.get("date", "9999") >= today}
+    fresh = []
     for f in result["finds"]:
         sig = find_signature(f)
         if alerted.get(f["id"], {}).get("sig") == sig:
             continue
-        tg.fanout(format_find(f), chat_ids)
+        fresh.append(f)
         alerted[f["id"]] = {"sig": sig, "date": f["date"]}
+    if len(fresh) <= 3:
+        for f in fresh:
+            tg.fanout(format_find(f), chat_ids)
+            sent += 1
+    elif fresh:
+        # many shows changed at once (e.g. a new booking week opened) —
+        # one digest instead of a message barrage
+        lines = [f"*The Odyssey — IMAX 70mm pairs @ AMC Metreon ({len(fresh)} shows)*"]
+        for f in fresh:
+            best = ", ".join(f"{p['seats'][0]}+{p['seats'][1]}" for p in f["bestPairs"][:2])
+            lines.append(f"{f['date']} {f['time']} — {f['pairCount']} pair(s), "
+                         f"best {best} — [book]({BOOK_URL.format(id=f['id'])})")
+        lines.append(source_tag())
+        tg.fanout("\n".join(lines), chat_ids)
         sent += 1
     state.kv_set(KV_ALERTED, json.dumps(alerted))
     return sent
@@ -361,7 +411,9 @@ def alert(result: dict, cfg: Config, state: State) -> int:
 def print_summary(result: dict) -> None:
     print("<RESULT>" + json.dumps(result) + "</RESULT>")
     print("\n=== Odyssey IMAX 70mm — non-front-row pairs watch ===")
-    print("Checked at:", result["checkedAtUtc"], "| dates:", ", ".join(result["datesChecked"]))
+    dc = result.get("datesChecked", [])
+    span = f"{dc[0]}..{dc[-1]} ({len(dc)} dates)" if dc else "none"
+    print("Checked at:", result["checkedAtUtc"], "| dates:", span)
     h = result.get("health") or {"ok": False, "reason": "health check did not run"}
     if not h["ok"]:
         print(f"HEALTH: BROKEN — {h['reason']}")
@@ -409,13 +461,35 @@ def cli() -> None:
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = Config.load()
     while True:
+        result = None
         try:
-            run_once(cfg, args.no_telegram)
+            result = run_once(cfg, args.no_telegram)
         except Exception:  # noqa: BLE001
             log.exception("odyssey scan failed")
         if not args.loop:
             break
-        time.sleep(args.loop)
+        time.sleep(next_delay(result, args.loop))
+
+
+def next_delay(result: dict | None, loop_seconds: int) -> float:
+    """Regular cadence, shortened so a scan fires ~1 hour before each
+    upcoming showtime (the last-minute-cancellation window)."""
+    delay = float(loop_seconds)
+    if not result:
+        return delay
+    now = datetime.now(timezone.utc)
+    for d in result.get("dates", []):
+        for s in d.get("night", []):
+            try:
+                pre = parse_show_utc(s["utc"]) - timedelta(hours=1)
+            except (ValueError, KeyError):
+                continue
+            wait = (pre - now).total_seconds()
+            if 0 < wait < delay:
+                delay = max(wait, 60.0)
+                log.info("odyssey: next scan in %.0fs — T-60min before %s %s",
+                         delay, d["date"], s["time"])
+    return delay
 
 
 if __name__ == "__main__":

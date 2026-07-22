@@ -6,7 +6,9 @@ Local stack: `./run.sh` brings up Chrome relay + listener + scraper. `./stop_chr
 
 ## Odyssey seat watcher
 
-`src/movementtix/odyssey.py` (`python -m movementtix.odyssey`) watches AMC Metreon 16 for The Odyssey in IMAX 70mm: night shows (≥5pm) with two adjacent available seats in row C or deeper. AMC's Queue-it/Cloudflare blocks its JS bundles but the Next.js RSC payload in the HTML carries showtimes + seat maps, so we parse `self.__next_f.push` blobs directly with plain headless Chromium (no relay/proxy needed). Health canary hits the theater's live showtimes page first — a scan is only trusted if the canary parses real showtimes. Alerts fan out to the Telegram subscriber list; dedupe + health-transition state live in `state.db` kv (`odyssey_alerted`, `odyssey_health`). Daemon: `./odyssey.sh` (15-min loop, `odyssey.log`/`odyssey.pid`); tunables via `WATCH_MIN_ROW`, `WATCH_DOW`, `WATCH_START`, `WATCH_MAX_DATES`.
+`src/movementtix/odyssey.py` (`python -m movementtix.odyssey`) watches AMC Metreon 16 for The Odyssey in IMAX 70mm: night shows (≥5pm) with two adjacent available seats in row C or deeper. AMC's Queue-it/Cloudflare blocks its JS bundles but the Next.js RSC payload in the HTML carries showtimes + seat maps, so we parse `self.__next_f.push` blobs directly with plain headless Chromium (no relay/proxy needed). Health canary hits the theater's live showtimes page first — a scan is only trusted if the canary parses real showtimes.
+
+Scan window starts **today** (already-started shows skipped) and probes forward until `WATCH_EMPTY_STOP` (3) consecutive dates have no shows — i.e. the full booking horizon, so newly added dates are picked up automatically. The loop runs every 15 min but shortens its sleep so a scan lands ~1 hour before each upcoming showtime (last-minute-cancellation window). Alerts fan out to the Telegram subscriber list; dedupe + health-transition state live in `state.db` kv (`odyssey_alerted`, `odyssey_health`). Daemon: `./odyssey.sh` (`odyssey.log`/`odyssey.pid`); tunables via `WATCH_MIN_ROW`, `WATCH_DOW`, `WATCH_START`, `WATCH_MAX_DATES`, `WATCH_EMPTY_STOP`.
 
 ## 2026 run summary (May 6 – May 29)
 
