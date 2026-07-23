@@ -413,8 +413,12 @@ def regal_seats(seatplan: dict) -> list[dict]:
     return out
 
 
+# cache: 'no-store' is load-bearing: the persistent profile (kept for its
+# Turnstile clearance) also keeps an HTTP disk cache, and the booking pages
+# themselves call GetSeatPlan — without it, fetch() can return a days-old
+# cached seat plan and alert on seats that sold long ago.
 _REGAL_FETCH_JS = """async (u) => {
-  const r = await fetch(u, {headers: {accept: 'application/json'}});
+  const r = await fetch(u, {headers: {accept: 'application/json'}, cache: 'no-store'});
   return {s: r.status, b: await r.text()};
 }"""
 
@@ -603,14 +607,31 @@ async def regal_scan() -> dict:
                         continue
                     hard_fails = 0
                     pairs = find_pairs(regal_seats(sp))
-                    if pairs:
-                        out["finds"].append({
-                            "date": show["date"], "time": show["time"],
-                            "status": "OnSale", "id": show["id"],
-                            "venue": REGAL_VENUE, "key": f"regal:{show['id']}",
-                            "url": REGAL_BOOK_URL.format(id=show["id"], date=show["mdY"]),
-                            "bestPairs": pairs[:4], "pairCount": len(pairs),
-                        })
+                    if not pairs:
+                        continue
+                    # Verify before alerting: re-fetch after a pause and only
+                    # keep pairs present in BOTH snapshots. Guards against any
+                    # residual caching layer and against cart-hold flicker.
+                    await asyncio.sleep(8.0)
+                    try:
+                        sp2 = await fetch_json(url + f"&_cb={int(time.time())}")
+                    except (RuntimeError, json.JSONDecodeError) as e:
+                        out["errors"].append(
+                            f"regal verify {show['date']} {show['time']}: {e}")
+                        continue
+                    pairs2 = {tuple(p["seats"]) for p in find_pairs(regal_seats(sp2))}
+                    confirmed = [p for p in pairs if tuple(p["seats"]) in pairs2]
+                    if not confirmed:
+                        log.info("regal: unconfirmed pairs at %s %s discarded "
+                                 "(stale/flicker)", show["date"], show["time"])
+                        continue
+                    out["finds"].append({
+                        "date": show["date"], "time": show["time"],
+                        "status": "OnSale", "id": show["id"],
+                        "venue": REGAL_VENUE, "key": f"regal:{show['id']}",
+                        "url": REGAL_BOOK_URL.format(id=show["id"], date=show["mdY"]),
+                        "bestPairs": confirmed[:4], "pairCount": len(confirmed),
+                    })
                 out["health"] = {"ok": True, "reason": "",
                                  "daysListed": len(days), "nightShows": len(out["shows"]),
                                  "seatChecks": len(selected),
