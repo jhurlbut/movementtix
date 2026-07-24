@@ -366,9 +366,23 @@ async def scan() -> dict:
     return result
 
 
-async def scan_all() -> dict:
-    """AMC + Regal scans concurrently, merged into one result."""
-    amc, regal = await asyncio.gather(scan(), regal_scan(), return_exceptions=True)
+# Last successful Regal scan's shows, reused on cycles where Regal is
+# skipped so pre-show sweep timing still sees its showtimes.
+_last_regal_shows: list[dict] = []
+
+
+async def scan_all(do_regal: bool = True) -> dict:
+    """AMC + (optionally) Regal scans concurrently, merged into one result.
+    Regal runs on a reduced cadence to stay under regmovies.com's per-IP
+    rate limit — which the user's own browser shares."""
+    global _last_regal_shows
+    if do_regal:
+        amc, regal = await asyncio.gather(scan(), regal_scan(), return_exceptions=True)
+    else:
+        amc = await asyncio.gather(scan(), return_exceptions=True)
+        amc = amc[0]
+        regal = {"shows": _last_regal_shows, "finds": [], "errors": [],
+                 "health": {"ok": True, "reason": "", "skipped": True}}
     if isinstance(amc, BaseException):
         result = {"checkedAtUtc": datetime.now(timezone.utc).isoformat(),
                   "dates": [], "finds": [], "errors": [f"amc scan crashed: {amc}"],
@@ -383,6 +397,8 @@ async def scan_all() -> dict:
         regal = {"shows": [], "finds": [],
                  "errors": [f"regal scan crashed: {regal}"],
                  "health": {"ok": False, "reason": f"regal scan crashed: {regal}"}}
+    if do_regal and regal["health"].get("ok"):
+        _last_regal_shows = regal["shows"]
     result["regalHealth"] = regal["health"]
     result["regalShows"] = regal["shows"]
     result["finds"].extend(regal["finds"])
@@ -554,7 +570,7 @@ async def regal_scan() -> dict:
                 # spend the budget where it matters: every upcoming show in the
                 # next 7 days each cycle, plus a rotating slice of the far tail
                 # so the whole horizon is swept across consecutive cycles.
-                budget = int(os.getenv("REGAL_SEAT_BUDGET", "16"))
+                budget = int(os.getenv("REGAL_SEAT_BUDGET", "8"))
                 to_check = [s for s in out["shows"] if not s["stopSales"]
                             and parse_show_utc(s["utc"]) > now]
                 horizon7 = (date.today() + timedelta(days=7)).isoformat()
@@ -573,7 +589,7 @@ async def regal_scan() -> dict:
                 hard_fails = 0
                 for i, show in enumerate(selected):
                     if i:
-                        await asyncio.sleep(4.0)
+                        await asyncio.sleep(7.0)
                     sp = None
                     url = (f"{REGAL_BASE}/api/GetSeatPlan?theatreCode="
                            f"{REGAL_THEATRE}&sessionId={show['id']}")
@@ -683,6 +699,8 @@ def alert(result: dict, cfg: Config, state: State) -> int:
     for venue, health, kv in ((AMC_VENUE, result.get("health") or fallback, KV_HEALTH),
                               (REGAL_VENUE, result.get("regalHealth") or fallback,
                                KV_HEALTH_REGAL)):
+        if health.get("skipped"):
+            continue  # venue not scanned this cycle; no transition to report
         prev = state.kv_get(kv) or "ok"
         if not health["ok"] and prev == "ok":
             tg.fanout(
@@ -764,8 +782,26 @@ def print_summary(result: dict) -> None:
         print("Notes:", " | ".join(result["errors"]))
 
 
-def run_once(cfg: Config, no_telegram: bool) -> dict:
-    result = asyncio.run(scan_all())
+REGAL_EVERY = int(os.getenv("REGAL_EVERY", "2"))  # scan Regal every Nth cycle
+
+
+def _regal_preshow_soon(minutes: int = 70) -> bool:
+    """True when a known Hacienda showtime starts within `minutes`, so a
+    skipped-cadence cycle is upgraded to a full scan for the T-60/T-30
+    sweeps."""
+    now = datetime.now(timezone.utc)
+    for s in _last_regal_shows:
+        try:
+            start = parse_show_utc(s["utc"])
+        except (ValueError, KeyError):
+            continue
+        if timedelta(0) < start - now < timedelta(minutes=minutes):
+            return True
+    return False
+
+
+def run_once(cfg: Config, no_telegram: bool, do_regal: bool = True) -> dict:
+    result = asyncio.run(scan_all(do_regal=do_regal))
     print_summary(result)
     if not no_telegram:
         state = State(cfg.state_db)
@@ -788,14 +824,17 @@ def cli() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = Config.load()
+    cycle = 0
     while True:
         result = None
+        do_regal = cycle % REGAL_EVERY == 0 or _regal_preshow_soon()
         try:
-            result = run_once(cfg, args.no_telegram)
+            result = run_once(cfg, args.no_telegram, do_regal=do_regal)
         except Exception:  # noqa: BLE001
             log.exception("odyssey scan failed")
         if not args.loop:
             break
+        cycle += 1
         time.sleep(next_delay(result, args.loop))
 
 
