@@ -296,6 +296,12 @@ async def scan() -> dict:
                                f"/showtimes/all/{d}/{THEATER}/all")
                         r = await fetch_html(ctx, url)
                         blob = rsc_blob(r["html"])
+                        # A rate-limit/error page has no RSC blob; if it counted
+                        # as "no shows" it would silently truncate the horizon.
+                        if (r["status"] and r["status"] >= 400) or len(blob) < 5000:
+                            result["errors"].append(
+                                f"showtimes {d}: HTTP {r['status']}, blob {len(blob)}b")
+                            return {"date": d, "total": 0, "night": [], "error": True}
                         shows = [s for s in parse_showtimes(blob)
                                  if MOVIE in s["aria"] and FORMAT in s["aria"]]
                         night = [{"id": s["id"], "time": s["time"], "status": s["status"],
@@ -335,25 +341,73 @@ async def scan() -> dict:
                 except ValueError:
                     return True
 
-            to_check = [{"date": d["date"], **s}
+            eligible = [{"date": d["date"], **s}
                         for d in result["dates"] for s in d["night"]
                         if not re.search(r"sold\s*out", s["status"], re.I) and upcoming(s)]
+            # Seat-map loads are the bulk of AMC traffic and tripped their
+            # per-IP limiter (HTTP 429s, which also break the user's own
+            # browsing). Budget like Regal: next 7 days every cycle plus a
+            # rotating slice of the far tail.
+            budget = int(os.getenv("AMC_SEAT_BUDGET", "10"))
+            horizon7 = (date.today() + timedelta(days=7)).isoformat()
+            near = [s for s in eligible if s["date"] <= horizon7]
+            far = [s for s in eligible if s["date"] > horizon7]
+            far_budget = max(0, budget - len(near))
+            if far and far_budget:
+                chunks = -(-len(far) // far_budget)
+                idx = int(time.time() // 900) % chunks
+                far_sel = far[idx * far_budget:(idx + 1) * far_budget]
+            else:
+                far_sel = []
+            to_check = near + far_sel
             result["seatChecks"] = len(to_check)
+            result["seatChecksDeferred"] = len(far) - len(far_sel)
+            rate_limited = 0
+
+            async def grab_pairs(show_id: str, buster: str = ""):
+                r = await fetch_html(ctx, BOOK_URL.format(id=show_id) + buster,
+                                     "seatingLayout")
+                if r["status"] == 429:
+                    return "429"
+                seats = parse_seat_layout(rsc_blob(r["html"]))
+                return None if seats is None else find_pairs(seats)
 
             async def one_seatmap(s: dict) -> None:
+                nonlocal rate_limited
                 async with sem:
+                    if rate_limited >= 2:
+                        return  # limiter tripped; stop adding fuel this cycle
                     try:
-                        r = await fetch_html(ctx, BOOK_URL.format(id=s["id"]), "seatingLayout")
-                        seats = parse_seat_layout(rsc_blob(r["html"]))
-                        if seats is None:
+                        pairs = await grab_pairs(s["id"])
+                        if pairs == "429":
+                            rate_limited += 1
+                            result["errors"].append(f"seats {s['date']} {s['time']}: HTTP 429")
+                            return
+                        if pairs is None:
                             result["errors"].append(f"no layout {s['date']} {s['time']}")
                             return
-                        pairs = find_pairs(seats)
-                        if pairs:
-                            result["finds"].append({
-                                "date": s["date"], "time": s["time"], "status": s["status"],
-                                "id": s["id"], "bestPairs": pairs[:4], "pairCount": len(pairs),
-                            })
+                        if not pairs:
+                            return
+                        # Verify before alerting: a second, cache-busted fetch
+                        # must still show the pair (guards CDN-stale pages and
+                        # checkout-hold flicker).
+                        await asyncio.sleep(8.0)
+                        pairs2 = await grab_pairs(s["id"], f"?_cb={int(time.time())}")
+                        if pairs2 in ("429", None):
+                            result["errors"].append(
+                                f"verify failed {s['date']} {s['time']}: {pairs2}")
+                            return
+                        keep = {tuple(p["seats"]) for p in pairs2}
+                        confirmed = [p for p in pairs if tuple(p["seats"]) in keep]
+                        if not confirmed:
+                            log.info("amc: unconfirmed pairs at %s %s discarded "
+                                     "(stale/flicker)", s["date"], s["time"])
+                            return
+                        result["finds"].append({
+                            "date": s["date"], "time": s["time"], "status": s["status"],
+                            "id": s["id"], "bestPairs": confirmed[:4],
+                            "pairCount": len(confirmed),
+                        })
                     except Exception as e:  # noqa: BLE001
                         result["errors"].append(f"seats {s['date']} {s['time']}: {e}")
 

@@ -10,6 +10,6 @@ if [[ -f odyssey.pid ]] && kill -0 "$(cat odyssey.pid)" 2>/dev/null; then
   exit 1
 fi
 
-nohup .venv/bin/python -u -m movementtix.odyssey --loop 900 >> odyssey.log 2>&1 &
+nohup .venv/bin/python -u -m movementtix.odyssey --loop 1800 >> odyssey.log 2>&1 &
 echo $! > odyssey.pid
 echo "started (pid $(cat odyssey.pid)). tail -f odyssey.log"
